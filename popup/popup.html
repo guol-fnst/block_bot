@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Block Bot</title>
+  <link rel="stylesheet" href="popup.css" />
+</head>
+<body>
+
+  <!-- ── Header ─────────────────────────────────────────────────────────── -->
+  <header class="header">
+    <span class="logo">🛡 Block Bot</span>
+    <button class="btn-icon" id="btn-options" title="设置">⚙</button>
+  </header>
+
+  <!-- ── View: not on x.com ─────────────────────────────────────────────── -->
+  <section id="view-not-x" class="view hidden">
+    <div class="notice">
+      <span class="notice-icon">ℹ️</span>
+      <p>当前不是 x.com/twitter.com 页面。你仍可在下方查看屏蔽进度并追加屏蔽账号。</p>
+    </div>
+  </section>
+
+  <!-- ── View: idle ─────────────────────────────────────────────────────── -->
+  <section id="view-idle" class="view">
+    <p class="hint">
+      点击下方按钮，扫描当前页面已显示的推文，用你配置的大模型检测垃圾账号和机器人号，
+      再由你确认后执行屏蔽。
+    </p>
+  </section>
+
+  <!-- ── View: scanning / analyzing ────────────────────────────────────── -->
+  <section id="view-scanning" class="view hidden">
+    <div class="progress-wrap">
+      <div class="spinner"></div>
+      <p id="scanning-msg">正在采集推文…</p>
+    </div>
+  </section>
+
+  <!-- ── View: no results / error ──────────────────────────────────────── -->
+  <section id="view-no-results" class="view hidden">
+    <div class="notice">
+      <span class="notice-icon" id="no-results-icon">✅</span>
+      <p id="no-results-msg">未发现疑似垃圾账号。</p>
+    </div>
+    <button class="btn btn-secondary" id="btn-retry">重新分析</button>
+  </section>
+
+  <!-- ── View: candidate list ───────────────────────────────────────────── -->
+  <section id="view-results" class="view hidden">
+    <div class="results-summary">
+      <span id="result-count">发现 <strong>0</strong> 个疑似账号</span>
+      <span id="tweet-count" class="muted"></span>
+    </div>
+    <div class="result-actions-top">
+      <button class="btn-link" id="btn-select-all">全选</button>
+      <button class="btn-link" id="btn-deselect-all">全不选</button>
+    </div>
+    <ul id="candidate-list" class="candidate-list"></ul>
+    <div class="result-actions-bottom">
+      <button class="btn btn-danger" id="btn-confirm-block">加入屏蔽任务列表</button>
+      <button class="btn btn-secondary" id="btn-cancel-results">取消</button>
+    </div>
+  </section>
+
+  <!-- ── Global queue panel (available on all pages) ───────────────────── -->
+  <section class="queue-panel" id="global-queue-panel">
+    <div class="queue-actions-top">
+      <button class="btn btn-primary" id="btn-analyze-inline">开始分析当前页面</button>
+    </div>
+    <div class="queue-header">
+      <p id="queue-msg">屏蔽任务：空闲</p>
+      <p id="queue-detail" class="muted"></p>
+    </div>
+    <div class="progress-bar-wrap compact">
+      <div class="progress-bar" id="queue-progress-bar"></div>
+    </div>
+    <ul id="queue-log" class="block-log compact"></ul>
+    <div class="queue-actions">
+      <button class="btn btn-secondary" id="btn-queue-pause">暂停</button>
+      <button class="btn btn-secondary" id="btn-queue-resume">继续</button>
+    </div>
+  </section>
+
+  <!-- ── View: blocking in progress ────────────────────────────────────── -->
+  <section id="view-blocking" class="view hidden">
+    <div class="block-header">
+      <p id="block-msg">正在屏蔽…</p>
+      <p id="block-detail" class="muted"></p>
+    </div>
+    <div class="progress-bar-wrap">
+      <div class="progress-bar" id="progress-bar"></div>
+    </div>
+    <ul id="block-log" class="block-log"></ul>
+    <div class="block-actions">
+      <button class="btn btn-secondary" id="btn-pause">暂停</button>
+    </div>
+  </section>
+
+  <!-- ── View: done ─────────────────────────────────────────────────────── -->
+  <section id="view-done" class="view hidden">
+    <div class="notice success">
+      <span class="notice-icon">✅</span>
+      <p id="done-msg">屏蔽完成。</p>
+    </div>
+    <ul id="done-log" class="block-log"></ul>
+    <button class="btn btn-secondary" id="btn-done-ok">完成</button>
+  </section>
+
+  <script src="popup.js"></script>
+</body>
+</html>

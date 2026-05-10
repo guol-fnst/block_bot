@@ -1,0 +1,113 @@
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font-size: 14px;
+  background: #0f1117;
+  color: #e7e9ea;
+  padding: 28px 20px;
+  min-height: 100vh;
+}
+
+.container { max-width: 500px; }
+
+h1 {
+  font-size: 20px;
+  font-weight: 700;
+  color: #1d9bf0;
+  margin-bottom: 24px;
+}
+
+h2 {
+  font-size: 15px;
+  font-weight: 600;
+  margin-bottom: 10px;
+}
+
+.card {
+  background: #1e2732;
+  border-radius: 12px;
+  padding: 18px;
+  margin-bottom: 20px;
+}
+
+.desc {
+  font-size: 13px;
+  color: #71767b;
+  line-height: 1.6;
+  margin-bottom: 12px;
+}
+.desc.small { font-size: 12px; margin-top: 8px; }
+.desc a { color: #1d9bf0; text-decoration: none; }
+.desc a:hover { text-decoration: underline; }
+.desc.version { color: #444d56; margin-bottom: 0; font-size: 12px; }
+
+.field-label {
+  display: block;
+  font-size: 12px;
+  color: #8b97a2;
+  margin-bottom: 6px;
+}
+
+.input-row {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 12px;
+}
+
+.input {
+  width: 100%;
+  flex: 1;
+  padding: 9px 12px;
+  border: 1px solid #2f3336;
+  border-radius: 8px;
+  background: #0f1117;
+  color: #e7e9ea;
+  font-size: 14px;
+  font-family: 'Courier New', monospace;
+}
+.input:focus { outline: none; border-color: #1d9bf0; }
+
+.select-input {
+  margin-bottom: 12px;
+}
+
+#openai-url,
+#openai-model {
+  margin-bottom: 12px;
+}
+
+.hidden { display: none !important; }
+
+.btn-toggle {
+  background: #2f3336;
+  border: none;
+  border-radius: 8px;
+  padding: 9px 11px;
+  cursor: pointer;
+  font-size: 16px;
+  line-height: 1;
+}
+.btn-toggle:hover { background: #3a3d41; }
+
+.btn {
+  padding: 9px 22px;
+  border: none;
+  border-radius: 20px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.btn-primary { background: #1d9bf0; color: #fff; }
+.btn-primary:hover { background: #1a8cd8; }
+
+.save-msg {
+  margin-top: 10px;
+  font-size: 13px;
+  padding: 7px 12px;
+  border-radius: 6px;
+  display: inline-block;
+}
+.save-msg.hidden { display: none; }
+.save-msg.ok  { background: #0e2b1e; color: #00ba7c; }
+.save-msg.err { background: #2d1515; color: #f4212e; }
