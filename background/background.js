@@ -357,7 +357,22 @@ function parseHandlesFromText(text) {
   return handles;
 }
 
-function buildPrompt(batch) {
+function defaultDetectionRules() {
+  return (
+    '【高置信度特征】：\n' +
+    '1. 营销/广告/引流话术、重复模板语言、可疑短链接\n' +
+    '2. 无实质内容的博眼球文字、机器人常见套路（抽奖转发等）\n' +
+    '3. 短时间内多条语义高度重复内容\n' +
+    '4. ⭐【自动回复机器人】：推文结构高度模板化，包含大量重复短语、固定话术块、\n' +
+    '   相同的账号/话题提及（如 @xxx、#xxx 出现频次异常高），\n' +
+    '   仅在特定位置有变化（如开头感叹词：卧槽、牛逼、炸裂 等，\n' +
+    '   但中间核心内容完全相同），这是自动回复/复制粘贴机器人的典型表现。\n' +
+    '   请提高这类推文的可疑程度。\n' +
+    '5. 推文中如果存在重复出现的长短语或整段复制的结构，高度怀疑是模板自动发送。'
+  );
+}
+
+function buildPrompt(batch, customDetectionPrompt = '') {
   const tweetsJson = JSON.stringify(
     batch.map(t => ({
       handle: t.handle,
@@ -371,6 +386,8 @@ function buildPrompt(batch) {
     null,
     2
   );
+
+  const rules = String(customDetectionPrompt || '').trim() || defaultDetectionRules();
 
   return (
     '你是一个 Twitter/X 垃圾账号检测助手。请分析以下推文列表，判断每个账号是否疑似' +
@@ -388,16 +405,7 @@ function buildPrompt(batch) {
     '  }\n' +
     ']\n\n' +
     '判断必须以推文内容与行为模式为主，不要仅因为账号名里有随机数字就判定为垃圾号。\n\n' +
-    '【高置信度特征】：\n' +
-    '1. 营销/广告/引流话术、重复模板语言、可疑短链接\n' +
-    '2. 无实质内容的博眼球文字、机器人常见套路（抽奖转发等）\n' +
-    '3. 短时间内多条语义高度重复内容\n' +
-    '4. ⭐【自动回复机器人】：推文结构高度模板化，包含大量重复短语、固定话术块、\n' +
-    '   相同的账号/话题提及（如 @xxx、#xxx 出现频次异常高），\n' +
-    '   仅在特定位置有变化（如开头感叹词：卧槽、牛逼、炸裂 等，\n' +
-    '   但中间核心内容完全相同），这是自动回复/复制粘贴机器人的典型表现。\n' +
-    '   请提高这类推文的可疑程度。\n' +
-    '5. 推文中如果存在重复出现的长短语或整段复制的结构，高度怀疑是模板自动发送。\n\n' +
+    rules + '\n\n' +
     '对于看起来正常的账号，isSpamOrBot 请返回 false，confidence 不要虚高。'
   );
 }
@@ -432,7 +440,8 @@ async function getProviderConfig() {
     'geminiModel',
     'openaiApiKey',
     'openaiApiUrl',
-    'openaiModel'
+    'openaiModel',
+    'customDetectionPrompt'
   ]);
 
   const provider = d.llmProvider || 'gemini';
@@ -442,7 +451,8 @@ async function getProviderConfig() {
     geminiModel: d.geminiModel || 'auto',
     openaiApiKey: d.openaiApiKey || '',
     openaiApiUrl: d.openaiApiUrl || '',
-    openaiModel: d.openaiModel || ''
+    openaiModel: d.openaiModel || '',
+    customDetectionPrompt: d.customDetectionPrompt || ''
   };
 }
 
@@ -451,7 +461,7 @@ async function analyzeBatchWithGemini(batch, cfg) {
     throw new Error('Gemini API Key 未设置。请在扩展设置页中配置后重试。');
   }
 
-  const prompt = buildPrompt(batch);
+  const prompt = buildPrompt(batch, cfg.customDetectionPrompt);
   const body = {
     contents: [{ parts: [{ text: prompt }] }],
     generationConfig: {
@@ -507,7 +517,7 @@ async function analyzeBatchWithOpenAICompatible(batch, cfg) {
     throw new Error('OpenAI 兼容模型名未设置。');
   }
 
-  const prompt = buildPrompt(batch);
+  const prompt = buildPrompt(batch, cfg.customDetectionPrompt);
   const body = {
     model: cfg.openaiModel,
     messages: [

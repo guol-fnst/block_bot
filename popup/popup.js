@@ -3,13 +3,10 @@
 const views = {
   notX:       document.getElementById('view-not-x'),
   idle:       document.getElementById('view-idle'),
-  consent:    document.getElementById('view-consent'),
   scanning:   document.getElementById('view-scanning'),
   noResults:  document.getElementById('view-no-results'),
   results:    document.getElementById('view-results')
 };
-
-const ANALYSIS_DISCLOSURE_CONSENT_KEY = 'analysisDisclosureConsent';
 
 let currentTabId = null;
 let isXTab = false;
@@ -17,7 +14,6 @@ let candidates = [];
 let scannedTweetCount = 0;
 let analysisPollTimer = null;
 let queuePollTimer = null;
-let pendingStartAfterConsent = false;
 
 function isSupportedXUrl(url) {
   try {
@@ -63,31 +59,6 @@ function stopQueuePolling() {
 function bindClick(id, handler) {
   const el = document.getElementById(id);
   if (el) el.addEventListener('click', handler);
-}
-
-function storageGet(keys) {
-  return new Promise(resolve => chrome.storage.local.get(keys, resolve));
-}
-
-function storageSet(data) {
-  return new Promise(resolve => chrome.storage.local.set(data, resolve));
-}
-
-async function hasAnalysisConsent() {
-  const d = await storageGet([ANALYSIS_DISCLOSURE_CONSENT_KEY]);
-  return Boolean(d[ANALYSIS_DISCLOSURE_CONSENT_KEY]);
-}
-
-async function markAnalysisConsentAgreed() {
-  await storageSet({ [ANALYSIS_DISCLOSURE_CONSENT_KEY]: true });
-}
-
-function showConsentView() {
-  const checkbox = document.getElementById('consent-checkbox');
-  const continueBtn = document.getElementById('btn-consent-continue');
-  if (checkbox) checkbox.checked = false;
-  if (continueBtn) continueBtn.disabled = true;
-  showView('consent');
 }
 
 async function getAnalysisState() {
@@ -193,13 +164,6 @@ async function init() {
 async function startAnalysis() {
   if (!isXTab || !currentTabId) {
     showNotice('当前标签页不是 X 站点页面，请切到 x.com / twitter.com 页面后重试。', true);
-    return;
-  }
-
-  const agreed = await hasAnalysisConsent();
-  if (!agreed) {
-    pendingStartAfterConsent = true;
-    showConsentView();
     return;
   }
 
@@ -376,34 +340,7 @@ bindClick('btn-options', () => {
   chrome.runtime.openOptionsPage();
 });
 
-bindClick('btn-consent-cancel', () => {
-  pendingStartAfterConsent = false;
-  showView(isXTab ? 'idle' : 'notX');
-});
-
-bindClick('btn-consent-continue', async () => {
-  const checkbox = document.getElementById('consent-checkbox');
-  if (!checkbox || !checkbox.checked) return;
-
-  await markAnalysisConsentAgreed();
-
-  if (pendingStartAfterConsent) {
-    pendingStartAfterConsent = false;
-    startAnalysis();
-    return;
-  }
-
-  showView(isXTab ? 'idle' : 'notX');
-});
-
-const consentCheckbox = document.getElementById('consent-checkbox');
-if (consentCheckbox) {
-  consentCheckbox.addEventListener('change', e => {
-    const continueBtn = document.getElementById('btn-consent-continue');
-    if (continueBtn) continueBtn.disabled = !e.target.checked;
-  });
-}
-
+bindClick('btn-analyze', startAnalysis);
 bindClick('btn-analyze-inline', startAnalysis);
 
 bindClick('btn-retry', () => {

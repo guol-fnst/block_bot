@@ -104,6 +104,24 @@
     </section>
 
     <section class="card">
+      <h2>检测提示词（可自定义）</h2>
+      <p class="desc">
+        这里填写的是“高置信度特征”规则。留空则使用内置默认规则。保存后下次分析立即生效，无需重新打包插件。
+      </p>
+
+      <label class="field-label" for="custom-prompt">自定义规则</label>
+      <textarea
+        id="custom-prompt"
+        class="input textarea-input"
+        placeholder="示例：重点识别模板化自动回复、同一话术批量复制、诱导私信或外链引流等行为..."
+        spellcheck="false"
+      ></textarea>
+
+      <button class="btn btn-primary" id="btn-save-prompt" type="button">保存提示词</button>
+      <p id="prompt-msg" class="save-msg hidden"></p>
+    </section>
+
+    <section class="card">
       <h2>关于</h2>
       <p class="desc">
         Block Bot 是一个本地运行的 Chrome 扩展。它扫描你在 X.com 上当前页面已显示的

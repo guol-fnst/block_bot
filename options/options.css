@@ -72,6 +72,13 @@ h2 {
   margin-bottom: 12px;
 }
 
+.textarea-input {
+  min-height: 140px;
+  margin-bottom: 12px;
+  resize: vertical;
+  line-height: 1.5;
+}
+
 #openai-model {
   margin-bottom: 12px;
 }
