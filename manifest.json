@@ -3,7 +3,7 @@
   "name": "Block Bot",
   "version": "0.1.0",
   "description": "扫描当前 X 页面已显示推文，将候选数据发送到你配置的模型服务分析；经你确认后在本地浏览器内执行限速屏蔽，必要时会后台打开 X 页面完成操作。",
-  "permissions": ["storage", "tabs", "activeTab", "scripting"],
+  "permissions": ["storage", "tabs", "scripting"],
   "host_permissions": ["https://x.com/*", "https://www.x.com/*", "https://twitter.com/*", "https://www.twitter.com/*"],
   "background": {
     "service_worker": "background/background.js"
