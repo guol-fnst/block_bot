@@ -3,10 +3,10 @@
 const providerSel = document.getElementById('provider');
 const geminiFields = document.getElementById('gemini-fields');
 const openaiFields = document.getElementById('openai-fields');
+const openaiEndpointText = document.getElementById('openai-endpoint');
 
 const geminiKeyInput = document.getElementById('gemini-key');
 const geminiModelSel = document.getElementById('gemini-model');
-const openaiUrlInput = document.getElementById('openai-url');
 const openaiModelInput = document.getElementById('openai-model');
 const openaiKeyInput = document.getElementById('openai-key');
 
@@ -18,40 +18,50 @@ const toggleOpenaiBtn = document.getElementById('btn-toggle-openai');
 
 const PRESETS = {
   deepseek: {
-    provider: 'openai_compat',
     url: 'https://api.deepseek.com/v1/chat/completions',
-    model: 'deepseek-chat'
+    model: 'deepseek-chat',
+    label: '固定端点：api.deepseek.com'
   },
   qwen: {
-    provider: 'openai_compat',
     url: 'https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions',
-    model: 'qwen-plus'
+    model: 'qwen-plus',
+    label: '固定端点：dashscope.aliyuncs.com'
   }
 };
 
+function normalizeProvider(provider) {
+  return provider === 'deepseek' || provider === 'qwen' || provider === 'gemini'
+    ? provider
+    : 'gemini';
+}
+
+function applyPresetIfNeeded(provider, forceModelReset = false) {
+  const p = PRESETS[provider];
+  if (!p) return;
+
+  openaiEndpointText.textContent = p.label;
+  if (forceModelReset || !openaiModelInput.value.trim()) {
+    openaiModelInput.value = p.model;
+  }
+}
+
 chrome.storage.local.get(
-  ['llmProvider', 'geminiApiKey', 'geminiModel', 'openaiApiUrl', 'openaiApiKey', 'openaiModel'],
+  ['llmProvider', 'geminiApiKey', 'geminiModel', 'openaiApiKey', 'openaiModel'],
   d => {
-    providerSel.value = d.llmProvider || 'gemini';
+    providerSel.value = normalizeProvider(d.llmProvider || 'gemini');
     geminiKeyInput.value = d.geminiApiKey || '';
     geminiModelSel.value = d.geminiModel || 'auto';
-    openaiUrlInput.value = d.openaiApiUrl || '';
     openaiKeyInput.value = d.openaiApiKey || '';
     openaiModelInput.value = d.openaiModel || '';
     renderProviderFields(providerSel.value);
+    applyPresetIfNeeded(providerSel.value);
   }
 );
 
 providerSel.addEventListener('change', () => {
   const selected = providerSel.value;
-  if (selected === 'deepseek' || selected === 'qwen') {
-    const p = PRESETS[selected];
-    openaiUrlInput.value = p.url;
-    openaiModelInput.value = p.model;
-    renderProviderFields('openai_compat');
-    return;
-  }
   renderProviderFields(selected);
+  applyPresetIfNeeded(selected, true);
 });
 
 toggleGeminiBtn.addEventListener('click', () => {
@@ -85,14 +95,15 @@ saveBtn.addEventListener('click', () => {
     return;
   }
 
-  const url = openaiUrlInput.value.trim();
-  const apiKey = openaiKeyInput.value.trim();
-  const model = openaiModelInput.value.trim();
-
-  if (!url || !/^https:\/\//.test(url)) {
-    showMsg('请输入有效的 OpenAI 兼容 API URL（仅支持 https）', false);
+  const preset = PRESETS[selected];
+  if (!preset) {
+    showMsg('请选择受支持的模型提供商', false);
     return;
   }
+
+  const apiKey = openaiKeyInput.value.trim();
+  const model = openaiModelInput.value.trim() || preset.model;
+
   if (!model) {
     showMsg('请输入模型名', false);
     return;
@@ -104,10 +115,10 @@ saveBtn.addEventListener('click', () => {
 
   chrome.storage.local.set({
     llmProvider: selected,
-    openaiApiUrl: url,
+    openaiApiUrl: preset.url,
     openaiApiKey: apiKey,
     openaiModel: model
-  }, () => showMsg('OpenAI 兼容配置已保存 ✓', true));
+  }, () => showMsg(`${selected === 'deepseek' ? 'DeepSeek' : 'Qwen'} 配置已保存 ✓`, true));
 });
 
 function renderProviderFields(provider) {

@@ -1,16 +1,9 @@
 /* Block Bot – content script
  * Runs only on https://x.com/*
- * Handles: tweet scraping, block-queue execution (so setTimeout is reliable),
- * and direct X API calls (credentials are injected automatically because we
- * are in the page origin context).
+ * Handles: tweet scraping and block-queue execution (so setTimeout is reliable).
  */
 (() => {
   'use strict';
-
-  // ── X web-app bearer token (public, used by x.com itself) ──────────────────
-  const BEARER =
-    'AAAAAAAAAAAAAAAAAAAAANRILgAAAAAAnNwIzUejRCOuH5E6I4xnZWgE%3D' +
-    'EUifiRBkKG5E2XSoUoDSfLmsL2ELi8NKlVOMiALTiQqHjl3GWo';
 
   // ── Block-queue state (lives in content-script scope = stable) ──────────────
   let bqState = emptyQueueState();
@@ -45,21 +38,6 @@
     return null;
   }
 
-  async function fetchWithTimeout(url, options, timeoutMs) {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), timeoutMs);
-    try {
-      return await fetch(url, { ...options, signal: controller.signal });
-    } catch (err) {
-      if (err && err.name === 'AbortError') {
-        throw new Error(`请求超时（>${Math.round(timeoutMs / 1000)}秒）`);
-      }
-      throw err;
-    } finally {
-      clearTimeout(timer);
-    }
-  }
-
   function sendRuntimeMessage(msg) {
     return new Promise((resolve, reject) => {
       chrome.runtime.sendMessage(msg, resp => {
@@ -70,20 +48,6 @@
         }
       });
     });
-  }
-
-  function getCt0() {
-    const m = document.cookie.match(/(?:^|;\s*)ct0=([^;]+)/);
-    return m ? decodeURIComponent(m[1]) : null;
-  }
-
-  function xHeaders(ct0) {
-    return {
-      Authorization: `Bearer ${BEARER}`,
-      'x-csrf-token': ct0,
-      'x-twitter-active-user': 'yes',
-      'x-twitter-client-language': 'zh-cn'
-    };
   }
 
   // ── Tweet scraping ───────────────────────────────────────────────────────────
@@ -148,39 +112,6 @@
     return results;
   }
 
-  // ── X API: get user ID from handle ──────────────────────────────────────────
-  async function fetchUserId(handle) {
-    const ct0 = getCt0();
-    if (!ct0) throw new Error('未找到 ct0 cookie，请确认已登录 X');
-
-    const screenName = handle.replace('@', '');
-    const url =
-      `https://x.com/i/api/1.1/users/show.json` +
-      `?screen_name=${encodeURIComponent(screenName)}`;
-
-    const resp = await fetchWithTimeout(
-      url,
-      {
-        credentials: 'include',
-        headers: xHeaders(ct0)
-      },
-      15000
-    );
-
-    if (!resp.ok) {
-      const body = await resp.text().catch(() => '');
-      const err = new Error(`获取用户 ID 失败 (HTTP ${resp.status}): ${body.slice(0, 120)}`);
-      if (resp.status === 401 && /"code"\s*:\s*89/.test(body)) {
-        err.code = 'TOKEN_INVALID';
-      }
-      throw err;
-    }
-
-    const data = await resp.json();
-    if (!data.id_str) throw new Error('API 未返回用户 ID');
-    return data.id_str;
-  }
-
   async function blockUserViaUi(handle) {
     const handleSlug = handle.replace('@', '').trim();
     if (!handleSlug) throw new Error('无效 handle，无法执行页面屏蔽');
@@ -238,45 +169,8 @@
     return { success: true, handle, mode: 'ui' };
   }
 
-  // ── X API: block user ────────────────────────────────────────────────────────
   async function blockUser(handle) {
-    try {
-      const ct0 = getCt0();
-      if (!ct0) throw new Error('未找到 ct0 cookie，请确认已登录 X');
-
-      const userId = await fetchUserId(handle);
-
-      const resp = await fetchWithTimeout(
-        'https://x.com/i/api/1.1/blocks/create.json',
-        {
-          method: 'POST',
-          credentials: 'include',
-          headers: {
-            ...xHeaders(ct0),
-            'Content-Type': 'application/x-www-form-urlencoded'
-          },
-          body: `user_id=${encodeURIComponent(userId)}`
-        },
-        15000
-      );
-
-      if (!resp.ok) {
-        const body = await resp.text().catch(() => '');
-        const err = new Error(`屏蔽请求失败 (HTTP ${resp.status}): ${body.slice(0, 120)}`);
-        if (resp.status === 401 && /"code"\s*:\s*89/.test(body)) {
-          err.code = 'TOKEN_INVALID';
-        }
-        throw err;
-      }
-
-      return { success: true, userId, handle, mode: 'api' };
-    } catch (err) {
-      if (err && err.code === 'TOKEN_INVALID') {
-        // Fallback: local page automation, no API token dependency.
-        return blockUserViaUi(handle);
-      }
-      throw err;
-    }
+    return blockUserViaUi(handle);
   }
 
   // ── Block-queue runner (content script scope → reliable setTimeout) ─────────

@@ -15,6 +15,17 @@ const GEMINI_MODELS = [
   'gemini-1.5-flash'
 ];
 
+const OPENAI_COMPAT_PRESETS = {
+  deepseek: {
+    url: 'https://api.deepseek.com/v1/chat/completions',
+    defaultModel: 'deepseek-chat'
+  },
+  qwen: {
+    url: 'https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions',
+    defaultModel: 'qwen-plus'
+  }
+};
+
 const runningTabs = new Set();
 
 const blockQueue = {
@@ -421,18 +432,22 @@ async function getProviderConfig() {
     'geminiApiKey',
     'geminiModel',
     'openaiApiKey',
-    'openaiApiUrl',
     'openaiModel'
   ]);
 
-  const provider = d.llmProvider || 'gemini';
+  const rawProvider = d.llmProvider || 'gemini';
+  const provider = rawProvider === 'deepseek' || rawProvider === 'qwen' || rawProvider === 'gemini'
+    ? rawProvider
+    : 'gemini';
+
+  const preset = OPENAI_COMPAT_PRESETS[provider] || null;
   return {
     provider,
     geminiApiKey: d.geminiApiKey || '',
     geminiModel: d.geminiModel || 'auto',
     openaiApiKey: d.openaiApiKey || '',
-    openaiApiUrl: d.openaiApiUrl || '',
-    openaiModel: d.openaiModel || ''
+    openaiApiUrl: preset ? preset.url : '',
+    openaiModel: preset ? (d.openaiModel || preset.defaultModel) : ''
   };
 }
 
@@ -530,10 +545,10 @@ async function analyzeBatch(batch, cfg) {
   if (cfg.provider === 'gemini') {
     return analyzeBatchWithGemini(batch, cfg);
   }
-  if (cfg.provider === 'deepseek' || cfg.provider === 'qwen' || cfg.provider === 'openai_compat') {
+  if (cfg.provider === 'deepseek' || cfg.provider === 'qwen') {
     return analyzeBatchWithOpenAICompatible(batch, cfg);
   }
-  return analyzeBatchWithOpenAICompatible(batch, cfg);
+  throw new Error('不支持的模型服务提供商');
 }
 
 function shouldFallbackToChunk(error) {

@@ -38,7 +38,6 @@ If the user enables analysis, the extension sends candidate post data directly t
 - Google Gemini
 - DeepSeek
 - Qwen
-- Another OpenAI-compatible API endpoint chosen by the user
 
 Those third-party services process data under their own terms and privacy policies. Users are responsible for choosing whether to use a given provider.
 
@@ -63,7 +62,6 @@ Data retention defaults:
 Data transmission security:
 
 - Candidate post/account data sent to third-party model services is transmitted over HTTPS.
-- Custom model API endpoints must use HTTPS.
 
 Limited Use statement:
 

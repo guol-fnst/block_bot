@@ -13,7 +13,7 @@
     <section class="card">
       <h2>模型与 API 配置</h2>
       <p class="desc">
-        支持 Gemini、DeepSeek、Qwen，以及 OpenAI 兼容接口（自定义 URL / API Key / model）。
+        支持 Gemini、DeepSeek、Qwen 三个固定供应商。
       </p>
 
       <label class="field-label" for="provider">提供商</label>
@@ -21,7 +21,6 @@
         <option value="gemini">Gemini</option>
         <option value="deepseek">DeepSeek（OpenAI 兼容）</option>
         <option value="qwen">Qwen（OpenAI 兼容）</option>
-        <option value="openai_compat">自定义 OpenAI 兼容</option>
       </select>
 
       <div id="gemini-fields">
@@ -54,14 +53,7 @@
       </div>
 
       <div id="openai-fields" class="hidden">
-        <label class="field-label" for="openai-url">API URL</label>
-        <input
-          id="openai-url"
-          class="input"
-          placeholder="https://api.deepseek.com/v1/chat/completions"
-          autocomplete="off"
-          spellcheck="false"
-        />
+        <p class="desc small" id="openai-endpoint"></p>
 
         <label class="field-label" for="openai-model">Model</label>
         <input
