@@ -1,0 +1,163 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Block Bot Privacy Policy</title>
+  <style>
+    :root {
+      --bg: #f8fafc;
+      --card: #ffffff;
+      --text: #0f172a;
+      --muted: #475569;
+      --border: #e2e8f0;
+      --accent: #0ea5a4;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      font-family: "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+      background: linear-gradient(180deg, #ecfeff 0%, var(--bg) 35%);
+      color: var(--text);
+      line-height: 1.7;
+    }
+
+    main {
+      max-width: 900px;
+      margin: 40px auto;
+      padding: 0 20px;
+    }
+
+    article {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 28px;
+      box-shadow: 0 10px 28px rgba(2, 6, 23, 0.06);
+    }
+
+    h1 {
+      margin-top: 0;
+      margin-bottom: 8px;
+      font-size: 34px;
+      letter-spacing: -0.02em;
+    }
+
+    h2 {
+      margin-top: 28px;
+      margin-bottom: 10px;
+      font-size: 24px;
+      border-left: 4px solid var(--accent);
+      padding-left: 10px;
+    }
+
+    p {
+      margin: 10px 0;
+    }
+
+    ul {
+      margin: 8px 0 10px;
+      padding-left: 24px;
+    }
+
+    li {
+      margin: 6px 0;
+    }
+
+    .meta {
+      color: var(--muted);
+      margin-top: 0;
+      margin-bottom: 18px;
+      font-weight: 600;
+    }
+
+    a { color: #0369a1; }
+  </style>
+</head>
+<body>
+  <main>
+    <article>
+      <h1>Block Bot Privacy Policy</h1>
+      <p class="meta">Last updated: 2026-05-11</p>
+
+      <p>This Privacy Policy describes how Block Bot handles information.</p>
+
+      <h2>1. Who We Are</h2>
+      <p>Block Bot is a browser extension designed to help users review visible posts on x.com / twitter.com and identify likely spam or bot accounts before user-confirmed local block actions.</p>
+      <p>Contact: support@blockbot-extension.com</p>
+
+      <h2>2. Data We Access</h2>
+      <p>When the user starts analysis on an X page, Block Bot may access:</p>
+      <ul>
+        <li>Visible post text from the current page</li>
+        <li>Account handles</li>
+        <li>Display names</li>
+        <li>Post URLs</li>
+        <li>Profile URLs</li>
+      </ul>
+      <p>When the user confirms block actions, Block Bot may use the existing logged-in X session context in the browser to complete those actions locally.</p>
+
+      <h2>3. How We Use Data</h2>
+      <p>We use accessed data only to:</p>
+      <ul>
+        <li>Analyze visible posts and identify likely spam/bot accounts</li>
+        <li>Present candidates for user review</li>
+        <li>Execute user-confirmed local block actions on X</li>
+        <li>Store local extension settings, queue state, and temporary analysis cache</li>
+      </ul>
+
+      <h2>4. Data Sharing and Third Parties</h2>
+      <p>Block Bot does not operate a proprietary analysis backend in the current version.</p>
+      <p>If the user enables analysis, candidate data is sent directly from the browser to the user-configured third-party model provider (such as Google Gemini, DeepSeek, or Qwen). These providers process data under their own terms and privacy policies.</p>
+
+      <h2>5. Data Storage</h2>
+      <p>Block Bot stores data locally in Chrome extension storage, including:</p>
+      <ul>
+        <li>Model provider selection</li>
+        <li>API endpoint configuration</li>
+        <li>API key entered by the user</li>
+        <li>Temporary analysis results</li>
+        <li>Block queue state</li>
+      </ul>
+      <p>Retention defaults:</p>
+      <ul>
+        <li>Analysis cache is temporary and can be cleared by the user</li>
+        <li>Provider configuration remains until edited by the user or extension removal</li>
+        <li>Queue state remains for task continuity and is removed when extension storage is removed</li>
+      </ul>
+
+      <h2>6. Data Security</h2>
+      <ul>
+        <li>Data sent to third-party model services is transmitted over HTTPS.</li>
+        <li>Block Bot does not intentionally send locally stored settings to a Block Bot-operated server.</li>
+      </ul>
+
+      <h2>7. Limited Use Commitments</h2>
+      <ul>
+        <li>We do not sell user data.</li>
+        <li>We do not use user data for advertising.</li>
+        <li>We do not transfer user data to data brokers.</li>
+        <li>We use data only for the user-facing functionality described above.</li>
+      </ul>
+
+      <h2>8. User Control</h2>
+      <p>Users can control whether to:</p>
+      <ul>
+        <li>Start an analysis</li>
+        <li>Choose a model provider</li>
+        <li>Provide an API key</li>
+        <li>Confirm which accounts should be blocked</li>
+      </ul>
+      <p>Users can remove the extension at any time and clear extension data through Chrome extension management.</p>
+
+      <h2>9. Background Tab Behavior</h2>
+      <p>To complete some user-confirmed block actions reliably, Block Bot may temporarily open or reuse a background X page in the browser and perform those local actions there.</p>
+
+      <h2>10. Changes to This Policy</h2>
+      <p>We may update this Privacy Policy from time to time. The latest update date is shown at the top of this page.</p>
+    </article>
+  </main>
+</body>
+</html>
