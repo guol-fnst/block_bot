@@ -93,3 +93,15 @@ Users can remove the extension at any time and can clear stored extension data t
 2. 启用开发者模式。
 3. 选择“加载已解压的扩展程序”，加载本目录。
 4. 打开 X 页面后，从弹窗启动分析。
+
+## 打包产物
+
+仓库中的 `dist/` 目录提供已打包的扩展文件：
+
+- `block-bot-chrome-extension-v0.1.0.zip`: 用于归档、分发或提交到 Chrome Web Store 的源码包。
+- `block-bot-chrome-extension-v0.1.0.crx`: 已打包的 Chrome 扩展安装文件，适合本地测试分发。
+
+说明：
+
+- `.crx` 安装通常需要通过 Chrome 企业策略、开发环境或拖拽到扩展页测试，普通稳定版 Chrome 对手动安装 `.crx` 的限制较多。
+- 如果需要保持扩展 ID 不变，后续重新打包时必须继续使用同一把私钥；私钥文件不应提交到仓库。
