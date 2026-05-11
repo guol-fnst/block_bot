@@ -5,7 +5,7 @@
 'use strict';
 
 const BATCH_SIZE = 15;
-const CONFIDENCE_THRESHOLD = 0.8;
+const DEFAULT_CONFIDENCE_THRESHOLD = 0.8;
 const ANALYSIS_KEY_PREFIX = 'analysisCache:';
 
 const GEMINI_MODELS = [
@@ -451,6 +451,19 @@ async function getProviderConfig() {
   };
 }
 
+function normalizeThreshold(raw) {
+  const v = Number(raw);
+  if (!Number.isFinite(v)) return DEFAULT_CONFIDENCE_THRESHOLD;
+  if (v < 0.5) return 0.5;
+  if (v > 1) return 1;
+  return v;
+}
+
+async function getConfidenceThreshold() {
+  const d = await storageGet(['spamConfidenceThreshold']);
+  return normalizeThreshold(d.spamConfidenceThreshold);
+}
+
 async function analyzeBatchWithGemini(batch, cfg) {
   if (!cfg.geminiApiKey) {
     throw new Error('Gemini API Key 未设置。请在扩展设置页中配置后重试。');
@@ -591,8 +604,10 @@ async function analyzeTweetsOptimized(tweets, cfg, onProgress) {
   return results;
 }
 
-function normalizeCandidates(results) {
-  const filtered = results.filter(r => r.isSpamOrBot && r.confidence >= CONFIDENCE_THRESHOLD);
+function normalizeCandidates(results, confidenceThreshold = DEFAULT_CONFIDENCE_THRESHOLD) {
+  const filtered = results.filter(
+    r => r.isSpamOrBot && Number(r.confidence || 0) >= confidenceThreshold
+  );
   const byHandle = {};
 
   filtered.forEach(r => {
@@ -721,7 +736,8 @@ async function startAnalysisForTab(tabId) {
       });
     });
 
-    const candidates = normalizeCandidates(results);
+    const confidenceThreshold = await getConfidenceThreshold();
+    const candidates = normalizeCandidates(results, confidenceThreshold);
     await setAnalysisState(tabId, {
       status: candidates.length > 0 ? 'done' : 'empty',
       scannedTweetCount: tweets.length,
@@ -810,11 +826,11 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
 
   // Backward compatibility with older popup flow.
   if (msg.action === 'analyzeTweets') {
-    getProviderConfig()
-      .then(async cfg => {
+    Promise.all([getProviderConfig(), getConfidenceThreshold()])
+      .then(async ([cfg, confidenceThreshold]) => {
         const tweets = msg.tweets || [];
         const all = await analyzeTweetsOptimized(tweets, cfg);
-        return normalizeCandidates(all);
+        return normalizeCandidates(all, confidenceThreshold);
       })
       .then(results => sendResponse({ ok: true, results }))
       .catch(e => sendResponse({ ok: false, error: e.message }));

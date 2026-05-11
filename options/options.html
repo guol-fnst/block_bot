@@ -83,6 +83,27 @@
     </section>
 
     <section class="card">
+      <h2>屏蔽策略</h2>
+      <p class="desc">
+        仅当模型判定概率达到该阈值时，账号才会出现在可屏蔽候选列表中。
+      </p>
+
+      <label class="field-label" for="spam-threshold">垃圾/机器人判定阈值（%）</label>
+      <input
+        type="number"
+        id="spam-threshold"
+        class="input"
+        min="50"
+        max="100"
+        step="1"
+        placeholder="80"
+      />
+      <p class="desc small">例如设置为 90，则 89% 及以下不会进入屏蔽候选。</p>
+      <button class="btn btn-primary" id="btn-save-threshold" type="button">保存阈值</button>
+      <p id="threshold-msg" class="save-msg hidden"></p>
+    </section>
+
+    <section class="card">
       <h2>关于</h2>
       <p class="desc">
         Block Bot 是一个本地运行的 Chrome 扩展。它扫描你在 X.com 上当前页面已显示的

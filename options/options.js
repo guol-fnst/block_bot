@@ -9,12 +9,23 @@ const geminiKeyInput = document.getElementById('gemini-key');
 const geminiModelSel = document.getElementById('gemini-model');
 const openaiModelInput = document.getElementById('openai-model');
 const openaiKeyInput = document.getElementById('openai-key');
+const spamThresholdInput = document.getElementById('spam-threshold');
 
 const saveBtn  = document.getElementById('btn-save');
 const saveMsg  = document.getElementById('save-msg');
 
 const toggleGeminiBtn = document.getElementById('btn-toggle-gemini');
 const toggleOpenaiBtn = document.getElementById('btn-toggle-openai');
+
+const DEFAULT_SPAM_THRESHOLD = 0.8;
+
+function normalizeThreshold(raw) {
+  const v = Number(raw);
+  if (!Number.isFinite(v)) return DEFAULT_SPAM_THRESHOLD;
+  if (v < 0.5) return 0.5;
+  if (v > 1) return 1;
+  return v;
+}
 
 const PRESETS = {
   deepseek: {
@@ -46,13 +57,14 @@ function applyPresetIfNeeded(provider, forceModelReset = false) {
 }
 
 chrome.storage.local.get(
-  ['llmProvider', 'geminiApiKey', 'geminiModel', 'openaiApiKey', 'openaiModel'],
+  ['llmProvider', 'geminiApiKey', 'geminiModel', 'openaiApiKey', 'openaiModel', 'spamConfidenceThreshold'],
   d => {
     providerSel.value = normalizeProvider(d.llmProvider || 'gemini');
     geminiKeyInput.value = d.geminiApiKey || '';
     geminiModelSel.value = d.geminiModel || 'auto';
     openaiKeyInput.value = d.openaiApiKey || '';
     openaiModelInput.value = d.openaiModel || '';
+    spamThresholdInput.value = String(Math.round(normalizeThreshold(d.spamConfidenceThreshold) * 100));
     renderProviderFields(providerSel.value);
     applyPresetIfNeeded(providerSel.value);
   }
@@ -132,7 +144,27 @@ function renderProviderFields(provider) {
   openaiFields.classList.remove('hidden');
 }
 
+document.getElementById('btn-save-threshold').addEventListener('click', () => {
+  const thresholdPct = Number(spamThresholdInput.value);
+
+  if (!Number.isFinite(thresholdPct) || thresholdPct < 50 || thresholdPct > 100) {
+    showThresholdMsg('屏蔽阈值必须在 50 到 100 之间', false);
+    return;
+  }
+
+  chrome.storage.local.set(
+    { spamConfidenceThreshold: normalizeThreshold(thresholdPct / 100) },
+    () => showThresholdMsg('阈值已保存 ✓', true)
+  );
+});
+
 function showMsg(text, ok) {
   saveMsg.textContent = text;
   saveMsg.className = 'save-msg ' + (ok ? 'ok' : 'err');
+}
+
+function showThresholdMsg(text, ok) {
+  const el = document.getElementById('threshold-msg');
+  el.textContent = text;
+  el.className = 'save-msg ' + (ok ? 'ok' : 'err');
 }
