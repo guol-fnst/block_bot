@@ -87,10 +87,6 @@ Users control whether to:
 
 Users can remove the extension at any time and can clear stored extension data through Chrome's extension management tools.
 
-### Contact
-
-For privacy or support requests, contact: support@blockbot-extension.com
-
 ## 开发
 
 1. 打开 Chrome 的扩展程序页面。
