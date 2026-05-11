@@ -353,21 +353,6 @@ async function runGlobalBlockQueue() {
   }
 }
 
-function parseHandlesFromText(text) {
-  const parts = String(text || '')
-    .split(/[\s,，;；\n\t]+/)
-    .map(s => s.trim())
-    .filter(Boolean);
-
-  const handles = [];
-  for (const p of parts) {
-    const m = p.match(/^@?[A-Za-z0-9_]{1,30}$/);
-    if (!m) continue;
-    handles.push({ handle: p.startsWith('@') ? p : `@${p}` });
-  }
-  return handles;
-}
-
 function buildPrompt(batch) {
   const tweetsJson = JSON.stringify(
     batch.map(t => ({
@@ -775,14 +760,6 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     return false;
   }
 
-  if (msg.action === 'enqueueGlobalBlockText') {
-    const accounts = parseHandlesFromText(msg.text || '');
-    const added = enqueueBlockAccounts(accounts);
-    runGlobalBlockQueue();
-    sendResponse({ ok: true, added, status: getBlockStatusSnapshot() });
-    return false;
-  }
-
   if (msg.action === 'getGlobalBlockStatus') {
     sendResponse({ ok: true, status: getBlockStatusSnapshot() });
     return false;
@@ -824,16 +801,4 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     return true;
   }
 
-  // Backward compatibility with older popup flow.
-  if (msg.action === 'analyzeTweets') {
-    Promise.all([getProviderConfig(), getConfidenceThreshold()])
-      .then(async ([cfg, confidenceThreshold]) => {
-        const tweets = msg.tweets || [];
-        const all = await analyzeTweetsOptimized(tweets, cfg);
-        return normalizeCandidates(all, confidenceThreshold);
-      })
-      .then(results => sendResponse({ ok: true, results }))
-      .catch(e => sendResponse({ ok: false, error: e.message }));
-    return true;
-  }
 });

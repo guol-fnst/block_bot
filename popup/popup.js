@@ -404,7 +404,6 @@ if (consentCheckbox) {
   });
 }
 
-bindClick('btn-analyze', startAnalysis);
 bindClick('btn-analyze-inline', startAnalysis);
 
 bindClick('btn-retry', () => {

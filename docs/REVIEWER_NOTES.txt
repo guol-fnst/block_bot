@@ -1,0 +1,38 @@
+Block Bot – Chrome Web Store Reviewer Notes
+============================================
+
+1. SUPPORTED PAGES
+   The extension only activates on x.com and twitter.com.
+   All content-script activity is scoped to those two hosts.
+
+2. DATA FLOW
+   Tweet content visible on the current page is scraped locally,
+   then sent directly from the user's browser to their own
+   configured third-party AI model provider (Gemini, DeepSeek, or
+   Qwen) over HTTPS. No data is sent to Block Bot servers.
+   The extension has no backend of its own.
+
+3. API KEY STORAGE
+   The user's API key is stored in chrome.storage.local on their
+   own device and is never transmitted anywhere except to the
+   model provider API endpoint they configured.
+
+4. BLOCKING FLOW
+   - Analysis results are shown to the user before any action.
+   - The user selects which accounts to block and confirms.
+   - Blocking is performed locally via the X web UI.
+   - The extension may open a background X tab solely to complete
+     a blocking action that cannot be done on the current tab.
+   - No automated bulk actions occur without user confirmation.
+
+5. PERMISSIONS RATIONALE
+   - storage: Saves provider config, API key, and consent flag locally.
+   - tabs: Reads the active tab URL to determine if the page is X/Twitter.
+   - scripting: Injects content script to scrape visible tweets and
+     perform block UI interactions on x.com / twitter.com.
+   - host_permissions (x.com, twitter.com): Required for the above scripting.
+
+6. TEST ACCOUNT (if needed)
+   You can test with any public X/Twitter account while logged in.
+   To exercise the AI analysis, set up a free Gemini API key at
+   https://aistudio.google.com/ (no cost for basic usage).
