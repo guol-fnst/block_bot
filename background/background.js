@@ -5,7 +5,7 @@
 'use strict';
 
 const BATCH_SIZE = 15;
-const DEFAULT_CONFIDENCE_THRESHOLD = 0.8;
+const CONFIDENCE_THRESHOLD = 0.8;
 const ANALYSIS_KEY_PREFIX = 'analysisCache:';
 
 const GEMINI_MODELS = [
@@ -14,17 +14,6 @@ const GEMINI_MODELS = [
   'gemini-2.5-flash',
   'gemini-1.5-flash'
 ];
-
-const OPENAI_COMPAT_PRESETS = {
-  deepseek: {
-    url: 'https://api.deepseek.com/v1/chat/completions',
-    defaultModel: 'deepseek-chat'
-  },
-  qwen: {
-    url: 'https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions',
-    defaultModel: 'qwen-plus'
-  }
-};
 
 const runningTabs = new Set();
 
@@ -353,6 +342,21 @@ async function runGlobalBlockQueue() {
   }
 }
 
+function parseHandlesFromText(text) {
+  const parts = String(text || '')
+    .split(/[\s,，;；\n\t]+/)
+    .map(s => s.trim())
+    .filter(Boolean);
+
+  const handles = [];
+  for (const p of parts) {
+    const m = p.match(/^@?[A-Za-z0-9_]{1,30}$/);
+    if (!m) continue;
+    handles.push({ handle: p.startsWith('@') ? p : `@${p}` });
+  }
+  return handles;
+}
+
 function buildPrompt(batch) {
   const tweetsJson = JSON.stringify(
     batch.map(t => ({
@@ -360,7 +364,9 @@ function buildPrompt(batch) {
       displayName: t.displayName,
       text: t.text,
       hasUrl: /https?:\/\//.test(t.text),
-      isReply: t.text.startsWith('@')
+      isReply: t.text.startsWith('@'),
+      textLength: t.text.length,
+      charDiversity: new Set(t.text).size // Rough indicator of vocab diversity
     })),
     null,
     2
@@ -381,9 +387,17 @@ function buildPrompt(batch) {
     '    "evidenceTweet": "命中的推文摘要"\n' +
     '  }\n' +
     ']\n\n' +
-    '判断必须以推文内容与行为模式为主，不要仅因为账号名里有随机数字就判定为垃圾号。\n' +
-    '高置信度特征：营销/广告/引流话术、重复模板语言、可疑短链接、' +
-    '无实质内容的博眼球文字、机器人常见套路（抽奖转发等）、短时间内多条语义高度重复内容。\n' +
+    '判断必须以推文内容与行为模式为主，不要仅因为账号名里有随机数字就判定为垃圾号。\n\n' +
+    '【高置信度特征】：\n' +
+    '1. 营销/广告/引流话术、重复模板语言、可疑短链接\n' +
+    '2. 无实质内容的博眼球文字、机器人常见套路（抽奖转发等）\n' +
+    '3. 短时间内多条语义高度重复内容\n' +
+    '4. ⭐【自动回复机器人】：推文结构高度模板化，包含大量重复短语、固定话术块、\n' +
+    '   相同的账号/话题提及（如 @xxx、#xxx 出现频次异常高），\n' +
+    '   仅在特定位置有变化（如开头感叹词：卧槽、牛逼、炸裂 等，\n' +
+    '   但中间核心内容完全相同），这是自动回复/复制粘贴机器人的典型表现。\n' +
+    '   请提高这类推文的可疑程度。\n' +
+    '5. 推文中如果存在重复出现的长短语或整段复制的结构，高度怀疑是模板自动发送。\n\n' +
     '对于看起来正常的账号，isSpamOrBot 请返回 false，confidence 不要虚高。'
   );
 }
@@ -417,36 +431,19 @@ async function getProviderConfig() {
     'geminiApiKey',
     'geminiModel',
     'openaiApiKey',
+    'openaiApiUrl',
     'openaiModel'
   ]);
 
-  const rawProvider = d.llmProvider || 'gemini';
-  const provider = rawProvider === 'deepseek' || rawProvider === 'qwen' || rawProvider === 'gemini'
-    ? rawProvider
-    : 'gemini';
-
-  const preset = OPENAI_COMPAT_PRESETS[provider] || null;
+  const provider = d.llmProvider || 'gemini';
   return {
     provider,
     geminiApiKey: d.geminiApiKey || '',
     geminiModel: d.geminiModel || 'auto',
     openaiApiKey: d.openaiApiKey || '',
-    openaiApiUrl: preset ? preset.url : '',
-    openaiModel: preset ? (d.openaiModel || preset.defaultModel) : ''
+    openaiApiUrl: d.openaiApiUrl || '',
+    openaiModel: d.openaiModel || ''
   };
-}
-
-function normalizeThreshold(raw) {
-  const v = Number(raw);
-  if (!Number.isFinite(v)) return DEFAULT_CONFIDENCE_THRESHOLD;
-  if (v < 0.5) return 0.5;
-  if (v > 1) return 1;
-  return v;
-}
-
-async function getConfidenceThreshold() {
-  const d = await storageGet(['spamConfidenceThreshold']);
-  return normalizeThreshold(d.spamConfidenceThreshold);
 }
 
 async function analyzeBatchWithGemini(batch, cfg) {
@@ -543,10 +540,10 @@ async function analyzeBatch(batch, cfg) {
   if (cfg.provider === 'gemini') {
     return analyzeBatchWithGemini(batch, cfg);
   }
-  if (cfg.provider === 'deepseek' || cfg.provider === 'qwen') {
+  if (cfg.provider === 'deepseek' || cfg.provider === 'qwen' || cfg.provider === 'openai_compat') {
     return analyzeBatchWithOpenAICompatible(batch, cfg);
   }
-  throw new Error('不支持的模型服务提供商');
+  return analyzeBatchWithOpenAICompatible(batch, cfg);
 }
 
 function shouldFallbackToChunk(error) {
@@ -589,10 +586,68 @@ async function analyzeTweetsOptimized(tweets, cfg, onProgress) {
   return results;
 }
 
-function normalizeCandidates(results, confidenceThreshold = DEFAULT_CONFIDENCE_THRESHOLD) {
-  const filtered = results.filter(
-    r => r.isSpamOrBot && Number(r.confidence || 0) >= confidenceThreshold
-  );
+// Simple Levenshtein-like similarity score for detecting near-duplicate messages
+function calcTextSimilarity(text1, text2) {
+  if (!text1 || !text2) return 0;
+  const s1 = String(text1).trim().toLowerCase();
+  const s2 = String(text2).trim().toLowerCase();
+  if (s1 === s2) return 1;
+  
+  // Extract "significant words" - ignore single chars and common words
+  const words1 = s1.match(/\w{3,}/g) || [];
+  const words2 = s2.match(/\w{3,}/g) || [];
+  if (words1.length === 0 || words2.length === 0) return 0;
+  
+  const common = new Set(words1).size === 0 ? 0 :
+    words1.filter(w => words2.includes(w)).length;
+  const totalWords = Math.max(words1.length, words2.length);
+  return common / totalWords;
+}
+
+// Detect copy-paste/auto-reply patterns: accounts with near-identical messages
+function detectAutoReplyBots(batch, results) {
+  if (!batch || !results || batch.length < 2) return;
+  
+  // Group results by tweet similarity
+  const tweetsWithResults = batch
+    .map((tweet, i) => ({
+      tweet: tweet.text || '',
+      handle: tweet.handle,
+      result: results[i]
+    }))
+    .filter(x => x.result);
+  
+  // Find clusters of similar tweets (90%+ similarity = likely copy-paste)
+  for (let i = 0; i < tweetsWithResults.length; i++) {
+    for (let j = i + 1; j < tweetsWithResults.length; j++) {
+      const sim = calcTextSimilarity(tweetsWithResults[i].tweet, tweetsWithResults[j].tweet);
+      if (sim > 0.85) {
+        // High similarity detected! These are likely auto-reply bots
+        // Boost confidence for both
+        if (tweetsWithResults[i].result.confidence) {
+          tweetsWithResults[i].result.confidence = Math.min(1, tweetsWithResults[i].result.confidence + 0.05);
+        }
+        if (tweetsWithResults[j].result.confidence) {
+          tweetsWithResults[j].result.confidence = Math.min(1, tweetsWithResults[j].result.confidence + 0.05);
+        }
+        
+        // Update reason to mention copy-paste detection
+        const similarity = Math.round(sim * 100);
+        if (tweetsWithResults[i].result.reason) {
+          tweetsWithResults[i].result.reason += ` | 复制粘贴(${similarity}%相似度)`;
+        }
+        if (tweetsWithResults[j].result.reason) {
+          tweetsWithResults[j].result.reason += ` | 复制粘贴(${similarity}%相似度)`;
+        }
+        tweetsWithResults[i].result.isSpamOrBot = true;
+        tweetsWithResults[j].result.isSpamOrBot = true;
+      }
+    }
+  }
+}
+
+function normalizeCandidates(results) {
+  const filtered = results.filter(r => r.isSpamOrBot && r.confidence >= CONFIDENCE_THRESHOLD);
   const byHandle = {};
 
   filtered.forEach(r => {
@@ -721,8 +776,10 @@ async function startAnalysisForTab(tabId) {
       });
     });
 
-    const confidenceThreshold = await getConfidenceThreshold();
-    const candidates = normalizeCandidates(results, confidenceThreshold);
+    // Detect coordinated copy-paste/auto-reply bots (multiple similar tweets)
+    detectAutoReplyBots(tweets, results);
+
+    const candidates = normalizeCandidates(results);
     await setAnalysisState(tabId, {
       status: candidates.length > 0 ? 'done' : 'empty',
       scannedTweetCount: tweets.length,
@@ -755,6 +812,14 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
 
   if (msg.action === 'enqueueGlobalBlockAccounts') {
     const added = enqueueBlockAccounts(msg.accounts || []);
+    runGlobalBlockQueue();
+    sendResponse({ ok: true, added, status: getBlockStatusSnapshot() });
+    return false;
+  }
+
+  if (msg.action === 'enqueueGlobalBlockText') {
+    const accounts = parseHandlesFromText(msg.text || '');
+    const added = enqueueBlockAccounts(accounts);
     runGlobalBlockQueue();
     sendResponse({ ok: true, added, status: getBlockStatusSnapshot() });
     return false;
@@ -801,4 +866,16 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     return true;
   }
 
+  // Backward compatibility with older popup flow.
+  if (msg.action === 'analyzeTweets') {
+    getProviderConfig()
+      .then(async cfg => {
+        const tweets = msg.tweets || [];
+        const all = await analyzeTweetsOptimized(tweets, cfg);
+        return normalizeCandidates(all);
+      })
+      .then(results => sendResponse({ ok: true, results }))
+      .catch(e => sendResponse({ ok: false, error: e.message }));
+    return true;
+  }
 });
