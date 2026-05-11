@@ -1,0 +1,110 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>隐私政策公网发布（最短流程）</title>
+  <style>
+    :root {
+      --bg: #f7fafc;
+      --card: #ffffff;
+      --text: #1f2937;
+      --muted: #4b5563;
+      --border: #e5e7eb;
+      --accent: #0f766e;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+      color: var(--text);
+      background: linear-gradient(180deg, #ecfeff 0%, var(--bg) 40%);
+      line-height: 1.65;
+    }
+    .wrap {
+      max-width: 880px;
+      margin: 40px auto;
+      padding: 0 20px;
+    }
+    .card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 28px;
+      box-shadow: 0 8px 24px rgba(15, 23, 42, 0.06);
+    }
+    h1 {
+      margin: 0 0 18px;
+      font-size: 30px;
+      color: #0f172a;
+    }
+    h2 {
+      margin: 28px 0 12px;
+      font-size: 22px;
+      color: #111827;
+      border-left: 4px solid var(--accent);
+      padding-left: 10px;
+    }
+    ol {
+      margin: 0;
+      padding-left: 24px;
+    }
+    li { margin: 10px 0; }
+    code {
+      background: #f1f5f9;
+      border: 1px solid #e2e8f0;
+      border-radius: 6px;
+      padding: 1px 6px;
+      font-family: Consolas, "Courier New", monospace;
+      font-size: 0.95em;
+    }
+    .note {
+      margin-top: 14px;
+      padding: 12px 14px;
+      background: #f0fdfa;
+      border: 1px solid #99f6e4;
+      border-radius: 10px;
+      color: var(--muted);
+    }
+    a { color: #0369a1; }
+  </style>
+</head>
+<body>
+  <main class="wrap">
+    <article class="card">
+      <h1>隐私政策公网发布（最短流程）</h1>
+
+      <h2>方案 A：GitHub Pages（推荐，免费）</h2>
+      <ol>
+        <li>新建仓库或使用当前仓库。</li>
+        <li>在仓库创建文件 <code>privacy-policy.html</code>。</li>
+        <li>将 <code>docs/PRIVACY_POLICY_WEB.md</code> 内容转成 HTML 放入该文件。</li>
+        <li>进入仓库 <code>Settings -> Pages</code>。</li>
+        <li><code>Source</code> 选择 <code>Deploy from a branch</code>，分支选 <code>main</code>，目录选 <code>/(root)</code> 或 <code>/docs</code>。</li>
+        <li>保存后等待 1-3 分钟，得到公开 URL：
+          <div class="note">
+            <a href="https://&lt;your-username&gt;.github.io/&lt;repo&gt;/privacy-policy.html">https://&lt;your-username&gt;.github.io/&lt;repo&gt;/privacy-policy.html</a>
+          </div>
+        </li>
+        <li>打开 URL 自检：是否无需登录即可访问、移动端可打开。</li>
+      </ol>
+
+      <h2>方案 B：官网静态页</h2>
+      <ol>
+        <li>在你官网新增 <code>/privacy</code> 页面。</li>
+        <li>粘贴 <code>docs/PRIVACY_POLICY_WEB.md</code> 内容。</li>
+        <li>确保全站 HTTPS。</li>
+        <li>打开无痕窗口检查可访问性。</li>
+      </ol>
+
+      <h2>提交到 Chrome Web Store 前检查</h2>
+      <ol>
+        <li>CWS 的 Privacy policy 字段填写公网 URL，而不是仓库相对路径。</li>
+        <li>页面包含更新时间（Last updated）。</li>
+        <li>页面包含联系邮箱（support@blockbot-extension.com 或你的真实支持邮箱）。</li>
+        <li>页面内容与扩展真实行为一致（第三方模型、后台标签页、本地存储）。</li>
+      </ol>
+    </article>
+  </main>
+</body>
+</html>
