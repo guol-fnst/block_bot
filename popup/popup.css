@@ -68,6 +68,35 @@ body {
   margin-bottom: 14px;
 }
 
+.consent-notice {
+  margin-bottom: 10px;
+}
+
+.consent-title {
+  font-weight: 700;
+  margin-bottom: 6px;
+}
+
+.consent-check-wrap {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  color: #c7d1db;
+  line-height: 1.45;
+  margin: 8px 0 12px;
+}
+
+.consent-check-wrap input {
+  margin-top: 2px;
+  accent-color: #1d9bf0;
+}
+
+.consent-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
 /* ── Buttons ────────────────────────────────────────────────────────────────── */
 .btn {
   display: block;

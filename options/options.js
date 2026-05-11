@@ -89,8 +89,8 @@ saveBtn.addEventListener('click', () => {
   const apiKey = openaiKeyInput.value.trim();
   const model = openaiModelInput.value.trim();
 
-  if (!url || !/^https?:\/\//.test(url)) {
-    showMsg('请输入有效的 OpenAI 兼容 API URL（http/https）', false);
+  if (!url || !/^https:\/\//.test(url)) {
+    showMsg('请输入有效的 OpenAI 兼容 API URL（仅支持 https）', false);
     return;
   }
   if (!model) {

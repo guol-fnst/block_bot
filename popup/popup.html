@@ -31,6 +31,26 @@
     </p>
   </section>
 
+  <section id="view-consent" class="view hidden">
+    <div class="notice consent-notice">
+      <span class="notice-icon">⚠️</span>
+      <div>
+        <p class="consent-title">开始分析前请确认以下事项</p>
+        <p>1. 将读取当前页面已显示的推文文本、账号名、链接等候选数据。</p>
+        <p>2. 候选数据会发送到你在设置里选择的第三方模型服务进行分析。</p>
+        <p>3. 你确认后执行屏蔽时，扩展可能临时在后台打开 X 页面完成操作。</p>
+      </div>
+    </div>
+    <label class="consent-check-wrap">
+      <input type="checkbox" id="consent-checkbox" />
+      <span>我已知晓并同意以上数据处理与后台操作说明</span>
+    </label>
+    <div class="consent-actions">
+      <button class="btn btn-primary" id="btn-consent-continue" disabled>同意并继续</button>
+      <button class="btn btn-secondary" id="btn-consent-cancel">取消</button>
+    </div>
+  </section>
+
   <!-- ── View: scanning / analyzing ────────────────────────────────────── -->
   <section id="view-scanning" class="view hidden">
     <div class="progress-wrap">

@@ -54,6 +54,22 @@ Block Bot stores the following data locally in Chrome extension storage:
 
 Block Bot does not intentionally transmit this locally stored configuration to a Block Bot-operated server.
 
+Data retention defaults:
+
+- Analysis cache: temporary, can be cleared by the user at any time, and may be overwritten by later analyses.
+- Provider configuration (including API endpoint and API key): kept locally until user edits settings or removes the extension.
+- Queue state and operation log: kept locally for ongoing task continuity and cleared when extension storage is removed.
+
+Data transmission security:
+
+- Candidate post/account data sent to third-party model services is transmitted over HTTPS.
+- Custom model API endpoints must use HTTPS.
+
+Limited Use statement:
+
+- Block Bot uses accessed user data only to provide the user-facing spam-account detection and user-confirmed local blocking feature.
+- Block Bot does not sell user data, does not use user data for advertising, and does not transfer user data to data brokers.
+
 ## User Control
 
 Users control whether to:
@@ -71,4 +87,4 @@ To complete some user-confirmed block actions reliably, Block Bot may temporaril
 
 ## Contact
 
-Before publishing, replace this section with a real contact email or support page for the publisher of Block Bot.
+For privacy or support requests, contact: support@blockbot-extension.com
