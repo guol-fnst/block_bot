@@ -2,6 +2,22 @@
 
 Block Bot 是一个面向 `x.com` / `twitter.com` 的 Chrome 扩展，用来扫描当前页面已显示的推文，识别疑似垃圾账号或机器人账号，并在用户确认后将这些账号加入本地屏蔽队列。
 
+## 手动安装
+
+推荐使用 `dist/block-bot-chrome-extension-v0.1.0.zip` 手动安装：
+
+1. 下载或找到仓库里的 `dist/block-bot-chrome-extension-v0.1.0.zip`。
+2. 解压这个 zip 文件，得到一个扩展目录。
+3. 打开 Chrome，在地址栏输入 `chrome://extensions/`。
+4. 打开右上角的“开发者模式”。
+5. 点击“加载已解压的扩展程序”。
+6. 选择第 2 步解压出来的扩展目录。
+7. 打开 `x.com` 或 `twitter.com` 页面，点击浏览器工具栏里的 Block Bot 图标开始使用。
+
+注意：不要直接选择 zip 文件，Chrome 的“加载已解压的扩展程序”需要选择解压后的文件夹。
+
+如果 Chrome 没有显示扩展图标，可以点击工具栏右侧的拼图图标，在扩展列表中找到 Block Bot 并固定到工具栏。首次使用前，建议先打开扩展的“选项”页面，配置要使用的模型服务和 API Key。
+
 ## 功能说明
 
 扩展只在 `x.com` 与 `twitter.com` 页面运行。它会读取当前页面已经渲染出来的推文内容、账号 handle、显示名称、推文链接和资料页链接，然后把候选数据发送到用户在设置页中选择的固定模型服务进行分类分析。
@@ -87,7 +103,7 @@ Users control whether to:
 
 Users can remove the extension at any time and can clear stored extension data through Chrome's extension management tools.
 
-## 开发
+## 本地开发
 
 1. 打开 Chrome 的扩展程序页面。
 2. 启用开发者模式。
@@ -98,10 +114,10 @@ Users can remove the extension at any time and can clear stored extension data t
 
 仓库中的 `dist/` 目录提供已打包的扩展文件：
 
-- `block-bot-chrome-extension-v0.1.0.zip`: 用于归档、分发或提交到 Chrome Web Store 的源码包。
+- `block-bot-chrome-extension-v0.1.0.zip`: 推荐给普通用户手动安装。先解压，再通过 Chrome 扩展程序页面加载解压后的目录。
 - `block-bot-chrome-extension-v0.1.0.crx`: 已打包的 Chrome 扩展安装文件，适合本地测试分发。
 
 说明：
 
-- `.crx` 安装通常需要通过 Chrome 企业策略、开发环境或拖拽到扩展页测试，普通稳定版 Chrome 对手动安装 `.crx` 的限制较多。
+- 普通稳定版 Chrome 对手动安装 `.crx` 的限制较多。如果只是自己安装使用，请优先使用 zip 解压后的目录。
 - 如果需要保持扩展 ID 不变，后续重新打包时必须继续使用同一把私钥；私钥文件不应提交到仓库。
