@@ -70,6 +70,7 @@
   <section class="queue-panel" id="global-queue-panel">
     <div class="queue-actions-top">
       <button class="btn btn-primary" id="btn-analyze-inline">开始分析当前页面</button>
+      <button class="btn btn-info" id="btn-deep-scan">深度扫描某博主</button>
     </div>
     <div class="queue-header">
       <p id="queue-msg">屏蔽任务：空闲</p>
@@ -84,6 +85,54 @@
       <button class="btn btn-secondary" id="btn-queue-resume">继续</button>
       <button class="btn btn-secondary" id="btn-queue-retry-failed">重试失败</button>
       <button class="btn btn-secondary" id="btn-queue-clear-done">清理完成</button>
+    </div>
+  </section>
+
+  <!-- ── Modal: Deep Scan ───────────────────────────────────────────────── -->
+  <div id="modal-deep-scan" class="modal hidden">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h2>🔍 深度扫描某博主的回复</h2>
+        <button class="modal-close" id="modal-close-deep-scan">&times;</button>
+      </div>
+      <div class="modal-body">
+        <label class="field-label" for="deep-scan-handle">博主 Handle（例：@xxx）</label>
+        <input id="deep-scan-handle" class="input" placeholder="@" />
+
+        <label class="field-label" for="deep-scan-posts">最多采集帖子数</label>
+        <input id="deep-scan-posts" class="input input-number" type="number" value="20" min="1" max="100" />
+
+        <label class="field-label" for="deep-scan-replies">每条帖子最多回复数</label>
+        <input id="deep-scan-replies" class="input input-number" type="number" value="100" min="10" max="500" />
+
+        <label class="field-label" for="deep-scan-total">总回复数上限</label>
+        <input id="deep-scan-total" class="input input-number" type="number" value="1000" min="50" max="5000" />
+
+        <p class="desc small">
+          深度扫描会逐条打开帖子采集回复，速度较慢。建议先用默认配置试试。
+        </p>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" id="btn-modal-cancel">取消</button>
+        <button class="btn btn-primary" id="btn-modal-start-deep-scan">开始扫描</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── View: Deep Scan Progress ───────────────────────────────────────── -->
+  <section id="view-deep-scan-progress" class="view hidden">
+    <div class="progress-wrap">
+      <div class="spinner"></div>
+      <p id="deep-scan-msg">正在采集…</p>
+    </div>
+    <div class="deep-scan-stats">
+      <p>已采集帖子：<strong id="deep-scan-posts-count">0</strong></p>
+      <p>已采集回复：<strong id="deep-scan-replies-count">0</strong></p>
+      <p>找到疑似账号：<strong id="deep-scan-candidates-count">0</strong></p>
+    </div>
+    <div class="deep-scan-actions">
+      <button class="btn btn-secondary" id="btn-deep-scan-pause">暂停</button>
+      <button class="btn btn-secondary" id="btn-deep-scan-cancel">取消</button>
     </div>
   </section>
 

@@ -93,6 +93,9 @@ body {
 .btn-danger  { background: #f4212e; color: #fff; }
 .btn-danger:not(:disabled):hover { background: #d0161f; }
 
+.btn-info { background: #1d7af0; color: #fff; }
+.btn-info:not(:disabled):hover { background: #1563d0; }
+
 .btn-link {
   background: none;
   border: none;
@@ -260,6 +263,142 @@ body {
   border-top: 1px solid #2f3336;
   padding: 12px 14px 14px;
   background: #111720;
+}
+
+/* ── Modal ──────────────────────────────────────────────────────────────────── */
+.modal {
+  display: flex;
+  position: fixed;
+  top: 0; left: 0; right: 0; bottom: 0;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.6);
+  z-index: 1000;
+}
+.modal.hidden { display: none !important; }
+
+.modal-content {
+  background: #1e2732;
+  border-radius: 12px;
+  width: 85%;
+  max-width: 350px;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.4);
+}
+
+.modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px;
+  border-bottom: 1px solid #2f3336;
+}
+
+.modal-header h2 {
+  font-size: 14px;
+  color: #e7e9ea;
+}
+
+.modal-close {
+  background: none;
+  border: none;
+  color: #71767b;
+  font-size: 20px;
+  cursor: pointer;
+  padding: 0;
+  width: 24px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.modal-close:hover { color: #e7e9ea; }
+
+.modal-body {
+  padding: 14px;
+}
+
+.modal-body .field-label {
+  display: block;
+  font-size: 12px;
+  color: #8b97a2;
+  margin-bottom: 5px;
+  margin-top: 10px;
+}
+
+.modal-body .input {
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid #2f3336;
+  border-radius: 6px;
+  background: #0f1117;
+  color: #e7e9ea;
+  font-size: 13px;
+}
+
+.modal-body .input:focus {
+  outline: none;
+  border-color: #1d9bf0;
+}
+
+.modal-body .input-number {
+  width: 100%;
+}
+
+.modal-body .desc.small {
+  font-size: 11px;
+  color: #71767b;
+  margin-top: 8px;
+  line-height: 1.4;
+}
+
+.modal-footer {
+  display: flex;
+  gap: 8px;
+  padding: 14px;
+  border-top: 1px solid #2f3336;
+}
+
+.modal-footer .btn {
+  display: inline-block;
+  width: auto;
+  flex: 1;
+  padding: 8px 12px;
+  margin: 0;
+}
+
+.modal-footer .btn-primary {
+  background: #1d9bf0;
+}
+
+.modal-footer .btn-secondary {
+  background: #2f3336;
+}
+
+/* ── Deep Scan Progress ───────────────────────────────────────────────────── */
+.deep-scan-stats {
+  background: #1e2732;
+  border-radius: 8px;
+  padding: 10px 12px;
+  margin: 10px 0;
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.deep-scan-stats p {
+  margin: 4px 0;
+}
+
+.deep-scan-actions {
+  margin-top: 10px;
+  display: flex;
+  gap: 6px;
+}
+
+.deep-scan-actions .btn {
+  width: auto;
+  flex: 1;
+  padding: 8px 12px;
+  font-size: 12px;
 }
 
 .queue-actions-top {

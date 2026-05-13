@@ -1,11 +1,12 @@
 'use strict';
 
 const views = {
-  notX:       document.getElementById('view-not-x'),
-  idle:       document.getElementById('view-idle'),
-  scanning:   document.getElementById('view-scanning'),
-  noResults:  document.getElementById('view-no-results'),
-  results:    document.getElementById('view-results')
+  notX:               document.getElementById('view-not-x'),
+  idle:               document.getElementById('view-idle'),
+  scanning:           document.getElementById('view-scanning'),
+  noResults:          document.getElementById('view-no-results'),
+  results:            document.getElementById('view-results'),
+  deepScanProgress:   document.getElementById('view-deep-scan-progress')
 };
 
 let currentTabId = null;
@@ -385,8 +386,127 @@ async function addSelectedToQueue() {
     candidates = [];
     showView(isXTab ? 'idle' : 'notX');
   } catch (e) {
-    showNotice('⚠️ 加入屏蔽任务失败：' + e.message, true);
+    showNotice('⚠️ 加入队列失败：' + e.message, true);
   }
+}
+
+// ── Deep Scan ──────────────────────────────────────────────────────────────
+
+let deepScanState = null;
+let deepScanPollTimer = null;
+
+function stopDeepScanPolling() {
+  if (deepScanPollTimer) { clearInterval(deepScanPollTimer); deepScanPollTimer = null; }
+}
+
+function openDeepScanModal() {
+  document.getElementById('modal-deep-scan').classList.remove('hidden');
+}
+
+function closeDeepScanModal() {
+  document.getElementById('modal-deep-scan').classList.add('hidden');
+}
+
+async function startDeepScan() {
+  const handle = (document.getElementById('deep-scan-handle').value || '').trim();
+  const maxPosts = parseInt(document.getElementById('deep-scan-posts').value, 10) || 20;
+  const maxRepliesPerPost = parseInt(document.getElementById('deep-scan-replies').value, 10) || 100;
+  const maxTotalReplies = parseInt(document.getElementById('deep-scan-total').value, 10) || 1000;
+
+  if (!handle) {
+    alert('请输入博主 Handle（如 @xxx）');
+    return;
+  }
+
+  closeDeepScanModal();
+  showView('deepScanProgress');
+  deepScanState = { postsCount: 0, repliesCount: 0, candidatesCount: 0 };
+
+  try {
+    const resp = await chrome.runtime.sendMessage({
+      action: 'startDeepScan',
+      config: {
+        handle,
+        maxPosts,
+        maxRepliesPerPost,
+        maxTotalReplies
+      }
+    });
+
+    if (!resp?.ok) {
+      showNotice('⚠️ 深度扫描失败：' + (resp?.error || '未知错误'), true);
+      return;
+    }
+
+    startDeepScanPolling();
+  } catch (e) {
+    showNotice('⚠️ 启动深度扫描失败：' + e.message, true);
+  }
+}
+
+async function getDeepScanStatus() {
+  const resp = await chrome.runtime.sendMessage({ action: 'getDeepScanStatus' });
+  if (!resp?.ok) throw new Error(resp?.error || '读取扫描状态失败');
+  return resp.status;
+}
+
+function renderDeepScanStatus(status) {
+  const msgEl = document.getElementById('deep-scan-msg');
+  const postsEl = document.getElementById('deep-scan-posts-count');
+  const repliesEl = document.getElementById('deep-scan-replies-count');
+  const candidatesEl = document.getElementById('deep-scan-candidates-count');
+  const pauseBtn = document.getElementById('btn-deep-scan-pause');
+  const cancelBtn = document.getElementById('btn-deep-scan-cancel');
+
+  msgEl.textContent = status.currentStep || '正在采集…';
+  postsEl.textContent = status.postsCount || 0;
+  repliesEl.textContent = status.repliesCount || 0;
+  candidatesEl.textContent = status.candidatesCount || 0;
+
+  pauseBtn.disabled = !status.running || status.paused;
+  cancelBtn.disabled = !status.running;
+
+  if (status.completed) {
+    stopDeepScanPolling();
+    if (status.candidates && status.candidates.length > 0) {
+      // Show results and add to queue
+      scannedTweetCount = status.repliesCount;
+      candidates = (status.candidates || []).map(c => ({ ...c, selected: true }));
+      renderResults();
+    } else {
+      showNotice(`深度扫描完成，未找到疑似账号。`, false);
+    }
+  }
+}
+
+function startDeepScanPolling() {
+  stopDeepScanPolling();
+  deepScanPollTimer = setInterval(async () => {
+    try {
+      const status = await getDeepScanStatus();
+      renderDeepScanStatus(status);
+    } catch (_) {}
+  }, 800);
+}
+
+async function pauseDeepScan() {
+  try {
+    await chrome.runtime.sendMessage({ action: 'pauseDeepScan' });
+  } catch (_) {}
+}
+
+async function resumeDeepScan() {
+  try {
+    await chrome.runtime.sendMessage({ action: 'resumeDeepScan' });
+  } catch (_) {}
+}
+
+async function cancelDeepScan() {
+  try {
+    await chrome.runtime.sendMessage({ action: 'cancelDeepScan' });
+    stopDeepScanPolling();
+    showView(isXTab ? 'idle' : 'notX');
+  } catch (_) {}
 }
 
 async function pauseQueue() {
@@ -449,6 +569,19 @@ bindClick('btn-queue-pause', pauseQueue);
 bindClick('btn-queue-resume', resumeQueue);
 bindClick('btn-queue-retry-failed', retryFailedQueue);
 bindClick('btn-queue-clear-done', clearDoneQueue);
+
+// Deep Scan bindings
+bindClick('btn-deep-scan', openDeepScanModal);
+bindClick('modal-close-deep-scan', closeDeepScanModal);
+bindClick('btn-modal-cancel', closeDeepScanModal);
+bindClick('btn-modal-start-deep-scan', startDeepScan);
+bindClick('btn-deep-scan-pause', pauseDeepScan);
+bindClick('btn-deep-scan-cancel', cancelDeepScan);
+
+// Modal close on backdrop click
+document.getElementById('modal-deep-scan').addEventListener('click', e => {
+  if (e.target.id === 'modal-deep-scan') closeDeepScanModal();
+});
 
 init().catch(() => {
   // Last-resort fallback: do not block manual analysis entry.

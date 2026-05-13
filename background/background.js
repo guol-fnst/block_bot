@@ -38,6 +38,24 @@ const blockQueue = {
   workerTabId: null
 };
 
+// Deep Scan State
+const deepScanState = {
+  running: false,
+  paused: false,
+  cancelled: false,
+  handle: '',
+  config: {},
+  postsCount: 0,
+  repliesCount: 0,
+  repliesCollected: [],
+  candidates: [],
+  candidatesCount: 0,
+  currentStep: '待启动',
+  scannedPostUrls: new Set(),
+  workerTabId: null,
+  error: ''
+};
+
 function geminiUrl(model) {
   return `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`;
 }
@@ -1189,6 +1207,298 @@ async function startAnalysisForTab(tabId) {
 }
 
 // ── Message handler ───────────────────────────────────────────────────────────
+
+function getDeepScanStatusSnapshot() {
+  return {
+    running: deepScanState.running,
+    paused: deepScanState.paused,
+    handle: deepScanState.handle,
+    postsCount: deepScanState.postsCount,
+    repliesCount: deepScanState.repliesCount,
+    candidatesCount: deepScanState.candidatesCount,
+    currentStep: deepScanState.currentStep,
+    completed: !deepScanState.running && deepScanState.candidatesCount >= 0,
+    candidates: deepScanState.candidates,
+    error: deepScanState.error
+  };
+}
+
+async function startDeepScan(config) {
+  deepScanState.running = true;
+  deepScanState.paused = false;
+  deepScanState.cancelled = false;
+  deepScanState.handle = config.handle || '';
+  deepScanState.config = config;
+  deepScanState.postsCount = 0;
+  deepScanState.repliesCount = 0;
+  deepScanState.repliesCollected = [];
+  deepScanState.candidates = [];
+  deepScanState.candidatesCount = 0;
+  deepScanState.currentStep = '正在初始化…';
+  deepScanState.scannedPostUrls = new Set();
+  deepScanState.error = '';
+
+  try {
+    const cfg = await getProviderConfig();
+    await performDeepScan(cfg);
+  } catch (e) {
+    deepScanState.error = e.message;
+    deepScanState.running = false;
+  }
+}
+
+async function performDeepScan(cfg) {
+  const handle = deepScanState.handle.replace('@', '');
+  const maxPosts = deepScanState.config.maxPosts || 20;
+  const maxRepliesPerPost = deepScanState.config.maxRepliesPerPost || 100;
+  const maxTotalReplies = deepScanState.config.maxTotalReplies || 1000;
+
+  try {
+    deepScanState.currentStep = `正在打开 @${handle} 的主页…`;
+    const profileUrl = `https://x.com/${handle}`;
+    let workerTab = deepScanState.workerTabId ? await chrome.tabs.get(deepScanState.workerTabId).catch(() => null) : null;
+
+    if (!workerTab) {
+      workerTab = await tabsCreate(profileUrl, false);
+      deepScanState.workerTabId = workerTab.id;
+    } else {
+      await tabsUpdate(workerTab.id, { url: profileUrl });
+    }
+
+    try {
+      await waitForTabLoaded(workerTab.id, 15000);
+    } catch (_) {}
+
+    deepScanState.currentStep = '正在采集最近的帖子链接…';
+    const postUrls = await collectUserPostLinks(workerTab.id, maxPosts);
+
+    if (deepScanState.cancelled) {
+      deepScanState.running = false;
+      return;
+    }
+
+    deepScanState.postsCount = postUrls.length;
+    deepScanState.currentStep = `已采集 ${postUrls.length} 条帖子，正在采集回复…`;
+
+    // Process each post
+    for (let i = 0; i < postUrls.length; i++) {
+      if (deepScanState.cancelled) {
+        deepScanState.running = false;
+        return;
+      }
+
+      while (deepScanState.paused) {
+        await sleep(500);
+        if (deepScanState.cancelled) {
+          deepScanState.running = false;
+          return;
+        }
+      }
+
+      const postUrl = postUrls[i];
+      if (deepScanState.scannedPostUrls.has(postUrl)) continue;
+      deepScanState.scannedPostUrls.add(postUrl);
+
+      deepScanState.currentStep = `采集第 ${i + 1}/${postUrls.length} 条帖子的回复…`;
+      await tabsUpdate(workerTab.id, { url: postUrl });
+
+      try {
+        await waitForTabLoaded(workerTab.id, 12000);
+      } catch (_) {}
+
+      const replies = await collectPostReplies(workerTab.id, maxRepliesPerPost);
+      deepScanState.repliesCollected.push(...replies);
+      deepScanState.repliesCount = deepScanState.repliesCollected.length;
+
+      if (deepScanState.repliesCount >= maxTotalReplies) {
+        deepScanState.repliesCollected = deepScanState.repliesCollected.slice(0, maxTotalReplies);
+        deepScanState.repliesCount = maxTotalReplies;
+        break;
+      }
+
+      await sleep(600);
+    }
+
+    if (deepScanState.repliesCollected.length === 0) {
+      deepScanState.running = false;
+      deepScanState.currentStep = '未找到任何回复';
+      return;
+    }
+
+    deepScanState.currentStep = `正在分析 ${deepScanState.repliesCollected.length} 条回复…`;
+    const prefilter = splitObviousBotReplies(deepScanState.repliesCollected, cfg.obviousBotKeywords);
+    let results = [...prefilter.localResults];
+
+    if (prefilter.modelTweets.length > 0) {
+      const modelResults = await analyzeTweetsOptimized(prefilter.modelTweets, cfg);
+      results.push(...modelResults);
+      detectAutoReplyBots(prefilter.modelTweets, modelResults);
+    }
+
+    deepScanState.candidates = normalizeCandidates(results, cfg.spamConfidenceThreshold);
+    deepScanState.candidatesCount = deepScanState.candidates.length;
+    deepScanState.currentStep = `扫描完成，找到 ${deepScanState.candidatesCount} 个疑似账号`;
+
+    // Add to block queue
+    if (deepScanState.candidatesCount > 0) {
+      enqueueBlockAccounts(deepScanState.candidates);
+      runGlobalBlockQueue();
+    }
+
+    deepScanState.running = false;
+  } catch (e) {
+    deepScanState.error = e.message;
+    deepScanState.running = false;
+  } finally {
+    // Clean up worker tab
+    if (deepScanState.workerTabId) {
+      try {
+        await tabsRemove(deepScanState.workerTabId);
+      } catch (_) {}
+      deepScanState.workerTabId = null;
+    }
+  }
+}
+
+function continueDeepScan() {
+  // Resume deep scan if paused
+  if (deepScanState.paused && deepScanState.running) {
+    deepScanState.paused = false;
+  }
+}
+
+async function collectUserPostLinks(tabId, maxLinks = 20) {
+  const links = [];
+  let lastCount = 0;
+  let stagnantRounds = 0;
+
+  for (let i = 0; i < 15; i++) {
+    const result = await executeInTab(tabId, () => {
+      const posts = [];
+      const articles = document.querySelectorAll('article[data-testid="tweet"]');
+      articles.forEach(article => {
+        try {
+          const timeEl = article.querySelector('time');
+          const statusA = timeEl ? timeEl.closest('a') : null;
+          const statusPath = statusA ? statusA.getAttribute('href') || '' : '';
+          const match = statusPath.match(/\/status\/\d+/);
+          if (match) {
+            const url = `https://x.com${statusPath}`;
+            if (!posts.includes(url)) posts.push(url);
+          }
+        } catch (_) {}
+      });
+      return posts;
+    }).catch(() => []);
+
+    links.push(...result.filter(link => !links.includes(link)));
+
+    if (links.length >= maxLinks) break;
+
+    if (result.length <= lastCount) {
+      stagnantRounds++;
+      if (stagnantRounds >= 2) break;
+    } else {
+      stagnantRounds = 0;
+    }
+
+    lastCount = result.length;
+    window.scrollBy({ top: Math.max(window.innerHeight * 0.8, 600), behavior: 'auto' });
+    await sleep(700);
+  }
+
+  return links.slice(0, maxLinks);
+}
+
+async function collectPostReplies(tabId, maxReplies = 100) {
+  const replies = [];
+  let lastCount = 0;
+  let stagnantRounds = 0;
+
+  for (let i = 0; i < 12; i++) {
+    const result = await executeInTab(tabId, () => {
+      const tweets = [];
+      const articles = document.querySelectorAll('article[data-testid="tweet"]');
+      const seen = new Set();
+
+      articles.forEach(article => {
+        try {
+          const userNameBlock = article.querySelector('[data-testid="User-Name"]');
+          if (!userNameBlock) return;
+
+          const profileAnchors = userNameBlock.querySelectorAll('a[href^="/"]');
+          let handle = '';
+          for (const a of profileAnchors) {
+            const rawPath = a.getAttribute('href') || '';
+            const slug = rawPath.replace(/^\//, '').split('/')[0].split('?')[0];
+            const reserved = new Set(['home', 'explore', 'notifications', 'messages', 'search', 'compose', 'settings', 'i', 'tos', 'privacy', 'hashtag']);
+            if (slug && !reserved.has(slug.toLowerCase())) {
+              handle = `@${slug}`;
+              break;
+            }
+          }
+
+          if (!handle) return;
+          if (seen.has(handle.toLowerCase())) return;
+          seen.add(handle.toLowerCase());
+
+          let displayName = '';
+          const spans = userNameBlock.querySelectorAll('span');
+          for (const s of spans) {
+            const t = s.textContent.trim();
+            if (t && !t.startsWith('@') && s.children.length === 0) {
+              displayName = t;
+              break;
+            }
+          }
+
+          const textEl = article.querySelector('[data-testid="tweetText"]');
+          const text = textEl ? textEl.innerText.trim() : '';
+
+          const timeEl = article.querySelector('time');
+          const statusA = timeEl ? timeEl.closest('a') : null;
+          const statusPath = statusA ? statusA.getAttribute('href') || '' : '';
+          const tweetUrl = statusPath ? `https://x.com${statusPath}` : '';
+
+          if (text) {
+            tweets.push({
+              handle,
+              displayName,
+              text,
+              tweetUrl,
+              profileUrl: `https://x.com/${handle.replace('@', '')}`
+            });
+          }
+        } catch (_) {}
+      });
+
+      return tweets;
+    }).catch(() => []);
+
+    result.forEach(r => {
+      if (!replies.find(rep => rep.handle.toLowerCase() === r.handle.toLowerCase())) {
+        replies.push(r);
+      }
+    });
+
+    if (replies.length >= maxReplies) break;
+
+    if (result.length <= lastCount) {
+      stagnantRounds++;
+      if (stagnantRounds >= 2) break;
+    } else {
+      stagnantRounds = 0;
+    }
+
+    lastCount = result.length;
+    window.scrollBy({ top: Math.max(window.innerHeight * 0.8, 600), behavior: 'auto' });
+    await sleep(600);
+  }
+
+  return replies.slice(0, maxReplies);
+}
+
+// ── Message handler ───────────────────────────────────────────────────────────
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   if (msg.action === 'backgroundUiBlock') {
     blockViaHiddenTab(msg.handle)
@@ -1333,5 +1643,44 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
       .then(results => sendResponse({ ok: true, results }))
       .catch(e => sendResponse({ ok: false, error: e.message }));
     return true;
+  }
+
+  // Deep Scan
+  if (msg.action === 'startDeepScan') {
+    if (deepScanState.running) {
+      sendResponse({ ok: false, error: '深度扫描已在运行中' });
+      return false;
+    }
+    startDeepScan(msg.config);
+    sendResponse({ ok: true });
+    return false;
+  }
+
+  if (msg.action === 'getDeepScanStatus') {
+    sendResponse({ ok: true, status: getDeepScanStatusSnapshot() });
+    return false;
+  }
+
+  if (msg.action === 'pauseDeepScan') {
+    deepScanState.paused = true;
+    sendResponse({ ok: true });
+    return false;
+  }
+
+  if (msg.action === 'resumeDeepScan') {
+    deepScanState.paused = false;
+    if (!deepScanState.running) {
+      // Resume the deep scan task
+      continueDeepScan();
+    }
+    sendResponse({ ok: true });
+    return false;
+  }
+
+  if (msg.action === 'cancelDeepScan') {
+    deepScanState.cancelled = true;
+    deepScanState.running = false;
+    sendResponse({ ok: true });
+    return false;
   }
 });
