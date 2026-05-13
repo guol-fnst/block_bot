@@ -106,6 +106,15 @@ h2 {
 }
 .btn-primary { background: #1d9bf0; color: #fff; }
 .btn-primary:hover { background: #1a8cd8; }
+.btn-secondary { background: #2f3336; color: #e7e9ea; }
+.btn-secondary:hover { background: #3a3d41; }
+.btn:disabled { opacity: .55; cursor: not-allowed; }
+
+.button-row {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
 
 .save-msg {
   margin-top: 10px;

@@ -30,6 +30,7 @@ const DEFAULT_DETECTION_RULES = [
 ].join('\n');
 
 const saveBtn  = document.getElementById('btn-save');
+const testConfigBtn = document.getElementById('btn-test-config');
 const saveMsg  = document.getElementById('save-msg');
 
 const toggleGeminiBtn = document.getElementById('btn-toggle-gemini');
@@ -218,7 +219,11 @@ toggleOpenaiBtn.addEventListener('click', () => {
   openaiKeyInput.type = openaiKeyInput.type === 'password' ? 'text' : 'password';
 });
 
-saveBtn.addEventListener('click', async () => {
+function storageSetAsync(data) {
+  return new Promise(resolve => chrome.storage.local.set(data, resolve));
+}
+
+async function saveProviderConfig(showSuccess = true) {
   const selected = providerSel.value;
 
   if (selected === 'gemini') {
@@ -226,25 +231,26 @@ saveBtn.addEventListener('click', async () => {
     const model = geminiModelSel.value || 'auto';
     if (!key) {
       showMsg('请输入 Gemini API Key', false);
-      return;
+      return false;
     }
     if (!key.startsWith('AIza')) {
       showMsg('Gemini Key 通常以 "AIza" 开头', false);
-      return;
+      return false;
     }
 
-    chrome.storage.local.set({
+    await storageSetAsync({
       llmProvider: 'gemini',
       geminiApiKey: key,
       geminiModel: model
-    }, () => showMsg('Gemini 配置已保存 ✓', true));
-    return;
+    });
+    if (showSuccess) showMsg('Gemini 配置已保存 ✓', true);
+    return true;
   }
 
   const preset = PRESETS[selected];
   if (!preset) {
     showMsg('请选择受支持的模型提供商', false);
-    return;
+    return false;
   }
 
   const apiKey = openaiKeyInput.value.trim();
@@ -253,32 +259,57 @@ saveBtn.addEventListener('click', async () => {
 
   if (!apiUrl || !/^https:\/\/.+/i.test(apiUrl)) {
     showMsg('请输入 https:// 开头的 API URL', false);
-    return;
+    return false;
   }
   if (!model) {
     showMsg('请输入模型名', false);
-    return;
+    return false;
   }
   if (!apiKey) {
     showMsg('请输入 API Key', false);
-    return;
+    return false;
   }
 
   if (selected === 'custom_openai') {
     const granted = await requestCustomEndpointPermission(apiUrl);
     if (!granted) {
       showMsg('未授予该 API 域名权限，无法保存自定义端点', false);
-      return;
+      return false;
     }
   }
 
-  chrome.storage.local.set({
+  await storageSetAsync({
     llmProvider: selected,
     openaiApiUrl: apiUrl,
     openaiApiKey: apiKey,
     openaiModel: model,
     openaiApiType: preset.apiType
-  }, () => showMsg('模型配置已保存 ✓', true));
+  });
+  if (showSuccess) showMsg('模型配置已保存 ✓', true);
+  return true;
+}
+
+saveBtn.addEventListener('click', async () => {
+  await saveProviderConfig(true);
+});
+
+testConfigBtn.addEventListener('click', async () => {
+  const saved = await saveProviderConfig(false);
+  if (!saved) return;
+
+  testConfigBtn.disabled = true;
+  saveBtn.disabled = true;
+  showMsg('正在测试模型配置…', true);
+  try {
+    const resp = await chrome.runtime.sendMessage({ action: 'testProviderConfig' });
+    if (!resp?.ok) throw new Error(resp?.error || '测试失败');
+    showMsg('测试通过，模型配置可用 ✓', true);
+  } catch (e) {
+    showMsg('测试失败：' + e.message, false);
+  } finally {
+    testConfigBtn.disabled = false;
+    saveBtn.disabled = false;
+  }
 });
 
 function requestCustomEndpointPermission(apiUrl) {

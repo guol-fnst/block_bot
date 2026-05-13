@@ -44,6 +44,7 @@
       <span class="notice-icon" id="no-results-icon">✅</span>
       <p id="no-results-msg">未发现疑似垃圾账号。</p>
     </div>
+    <button class="btn btn-primary hidden" id="btn-open-options-from-notice">打开设置页</button>
     <button class="btn btn-secondary" id="btn-retry">重新分析</button>
   </section>
 
@@ -55,6 +56,7 @@
     </div>
     <div class="result-actions-top">
       <button class="btn-link" id="btn-select-all">全选</button>
+      <button class="btn-link" id="btn-select-high">只选 90%+</button>
       <button class="btn-link" id="btn-deselect-all">全不选</button>
     </div>
     <ul id="candidate-list" class="candidate-list"></ul>
@@ -80,6 +82,8 @@
     <div class="queue-actions">
       <button class="btn btn-secondary" id="btn-queue-pause">暂停</button>
       <button class="btn btn-secondary" id="btn-queue-resume">继续</button>
+      <button class="btn btn-secondary" id="btn-queue-retry-failed">重试失败</button>
+      <button class="btn btn-secondary" id="btn-queue-clear-done">清理完成</button>
     </div>
   </section>
 

@@ -334,6 +334,29 @@ function recalcTotals() {
   blockQueue.failed = blockQueue.queue.filter(i => i.status === 'failed').length;
 }
 
+function retryFailedBlockItems() {
+  let count = 0;
+  blockQueue.queue.forEach(item => {
+    if (item.status === 'failed') {
+      item.status = 'pending';
+      item.lastError = '';
+      count++;
+    }
+  });
+  blockQueue.consecutiveFails = 0;
+  blockQueue.errorMsg = '';
+  recalcTotals();
+  return count;
+}
+
+function clearCompletedBlockItems() {
+  const before = blockQueue.queue.length;
+  blockQueue.queue = blockQueue.queue.filter(i => i.status !== 'done');
+  blockQueue.log = blockQueue.log.filter(i => i.status !== 'done');
+  recalcTotals();
+  return before - blockQueue.queue.length;
+}
+
 function enqueueBlockAccounts(accounts) {
   const seen = new Set(blockQueue.queue.map(i => i.handle.toLowerCase()));
   let added = 0;
@@ -512,6 +535,14 @@ function parseArrayFromModelText(rawText) {
   }
 }
 
+function normalizeThreshold(raw) {
+  const v = Number(raw);
+  if (!Number.isFinite(v)) return CONFIDENCE_THRESHOLD;
+  if (v < 0.5) return 0.5;
+  if (v > 1) return 1;
+  return v;
+}
+
 async function getProviderConfig() {
   const d = await storageGet([
     'llmProvider',
@@ -521,6 +552,7 @@ async function getProviderConfig() {
     'openaiApiUrl',
     'openaiModel',
     'openaiApiType',
+    'spamConfidenceThreshold',
     'customDetectionPrompt'
   ]);
 
@@ -533,7 +565,39 @@ async function getProviderConfig() {
     openaiApiUrl: d.openaiApiUrl || '',
     openaiModel: d.openaiModel || '',
     openaiApiType: d.openaiApiType || (provider === 'anthropic' ? 'anthropic' : 'openai_compat'),
+    spamConfidenceThreshold: normalizeThreshold(d.spamConfidenceThreshold),
     customDetectionPrompt: d.customDetectionPrompt || ''
+  };
+}
+
+function getProviderConfigIssue(cfg) {
+  if (cfg.provider === 'gemini') {
+    return cfg.geminiApiKey ? '' : 'Gemini API Key 未设置。请先打开设置页配置模型服务。';
+  }
+
+  if (!cfg.openaiApiUrl) return 'API URL 未设置。请先打开设置页配置模型服务。';
+  if (!cfg.openaiModel) return '模型名未设置。请先打开设置页配置模型服务。';
+  if (!cfg.openaiApiKey) return 'API Key 未设置。请先打开设置页配置模型服务。';
+  return '';
+}
+
+async function testProviderConfig() {
+  const cfg = await getProviderConfig();
+  const issue = getProviderConfigIssue(cfg);
+  if (issue) throw new Error(issue);
+
+  const sample = [{
+    handle: '@block_bot_test',
+    displayName: 'Block Bot Test',
+    text: 'This is a normal configuration test message.',
+    tweetUrl: '',
+    profileUrl: 'https://x.com/block_bot_test'
+  }];
+
+  await analyzeBatch(sample, cfg);
+  return {
+    provider: cfg.provider,
+    model: cfg.provider === 'gemini' ? cfg.geminiModel : cfg.openaiModel
   };
 }
 
@@ -793,8 +857,9 @@ function detectAutoReplyBots(batch, results) {
   }
 }
 
-function normalizeCandidates(results) {
-  const filtered = results.filter(r => r.isSpamOrBot && r.confidence >= CONFIDENCE_THRESHOLD);
+function normalizeCandidates(results, threshold = CONFIDENCE_THRESHOLD) {
+  const minConfidence = normalizeThreshold(threshold);
+  const filtered = results.filter(r => r.isSpamOrBot && r.confidence >= minConfidence);
   const byHandle = {};
 
   filtered.forEach(r => {
@@ -807,7 +872,7 @@ function normalizeCandidates(results) {
         confidence: Number(r.confidence || 0),
         reason: r.reason || '',
         evidenceTweet: r.evidenceTweet || '',
-        selected: true
+        selected: Number(r.confidence || 0) >= 0.9
       };
     }
   });
@@ -926,7 +991,7 @@ async function startAnalysisForTab(tabId) {
     // Detect coordinated copy-paste/auto-reply bots (multiple similar tweets)
     detectAutoReplyBots(tweets, results);
 
-    const candidates = normalizeCandidates(results);
+    const candidates = normalizeCandidates(results, cfg.spamConfidenceThreshold);
     await setAnalysisState(tabId, {
       status: candidates.length > 0 ? 'done' : 'empty',
       scannedTweetCount: tweets.length,
@@ -977,6 +1042,21 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     return false;
   }
 
+  if (msg.action === 'retryFailedGlobalBlocking') {
+    const retried = retryFailedBlockItems();
+    if (retried > 0) {
+      runGlobalBlockQueue();
+    }
+    sendResponse({ ok: true, retried, status: getBlockStatusSnapshot() });
+    return false;
+  }
+
+  if (msg.action === 'clearDoneGlobalBlocking') {
+    const cleared = clearCompletedBlockItems();
+    sendResponse({ ok: true, cleared, status: getBlockStatusSnapshot() });
+    return false;
+  }
+
   if (msg.action === 'pauseGlobalBlocking') {
     blockQueue.paused = true;
     blockQueue.running = false;
@@ -1011,9 +1091,35 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
       return true;
     }
 
-    startAnalysisForTab(msg.tabId);
-    sendResponse({ ok: true, started: true });
-    return false;
+    getProviderConfig()
+      .then(cfg => {
+        const issue = getProviderConfigIssue(cfg);
+        if (issue) {
+          sendResponse({ ok: false, needsConfig: true, error: issue });
+          return;
+        }
+        startAnalysisForTab(msg.tabId);
+        sendResponse({ ok: true, started: true });
+      })
+      .catch(e => sendResponse({ ok: false, error: e.message }));
+    return true;
+  }
+
+  if (msg.action === 'getProviderConfigStatus') {
+    getProviderConfig()
+      .then(cfg => {
+        const issue = getProviderConfigIssue(cfg);
+        sendResponse({ ok: true, configured: !issue, issue });
+      })
+      .catch(e => sendResponse({ ok: false, error: e.message }));
+    return true;
+  }
+
+  if (msg.action === 'testProviderConfig') {
+    testProviderConfig()
+      .then(result => sendResponse({ ok: true, result }))
+      .catch(e => sendResponse({ ok: false, error: e.message }));
+    return true;
   }
 
   if (msg.action === 'getAnalysisForTab') {
@@ -1041,7 +1147,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
       .then(async cfg => {
         const tweets = msg.tweets || [];
         const all = await analyzeTweetsOptimized(tweets, cfg);
-        return normalizeCandidates(all);
+        return normalizeCandidates(all, cfg.spamConfidenceThreshold);
       })
       .then(results => sendResponse({ ok: true, results }))
       .catch(e => sendResponse({ ok: false, error: e.message }));

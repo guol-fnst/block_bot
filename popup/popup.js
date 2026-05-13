@@ -81,6 +81,12 @@ async function getGlobalQueueStatus() {
   return resp.status;
 }
 
+async function getProviderConfigStatus() {
+  const resp = await chrome.runtime.sendMessage({ action: 'getProviderConfigStatus' });
+  if (!resp?.ok) throw new Error(resp?.error || '读取模型配置失败');
+  return resp;
+}
+
 function renderQueueStatus(s) {
   const msgEl = document.getElementById('queue-msg');
   const detailEl = document.getElementById('queue-detail');
@@ -88,13 +94,18 @@ function renderQueueStatus(s) {
   const logEl = document.getElementById('queue-log');
   const pauseBtn = document.getElementById('btn-queue-pause');
   const resumeBtn = document.getElementById('btn-queue-resume');
+  const retryFailedBtn = document.getElementById('btn-queue-retry-failed');
+  const clearDoneBtn = document.getElementById('btn-queue-clear-done');
 
   const pending = (s.queue || []).filter(i => i.status === 'pending').length;
+  const failed = Number(s.failed || 0);
+  const done = Number(s.done || 0);
   const runningText = s.running ? '运行中' : (s.paused ? '已暂停' : '空闲');
   msgEl.textContent = `屏蔽任务：${runningText}（待处理 ${pending}）`;
-  detailEl.textContent = s.current
+  const baseDetail = s.current
     ? `当前：${s.current} ｜ 成功 ${s.done} ｜ 失败 ${s.failed}`
     : `成功 ${s.done} ｜ 失败 ${s.failed} ｜ 总计 ${s.total}`;
+  detailEl.textContent = s.errorMsg ? `${baseDetail} ｜ ${s.errorMsg}` : baseDetail;
 
   const pct = s.total > 0 ? ((s.done + s.failed) / s.total) * 100 : 0;
   bar.style.width = `${Math.max(0, Math.min(100, pct))}%`;
@@ -111,6 +122,8 @@ function renderQueueStatus(s) {
 
   pauseBtn.disabled = !s.running;
   resumeBtn.disabled = s.running || pending === 0;
+  retryFailedBtn.disabled = s.running || failed === 0;
+  clearDoneBtn.disabled = s.running || done === 0;
 }
 
 async function refreshQueueStatus() {
@@ -149,6 +162,8 @@ async function init() {
     return;
   }
 
+  await renderConfigHintIfNeeded();
+
   try {
     const state = await getAnalysisState();
     if (state) {
@@ -163,6 +178,16 @@ async function init() {
   showView('idle');
 }
 
+async function renderConfigHintIfNeeded() {
+  try {
+    const status = await getProviderConfigStatus();
+    const btn = document.getElementById('btn-analyze-inline');
+    if (!status.configured && btn) {
+      btn.textContent = '先配置模型服务';
+    }
+  } catch (_) {}
+}
+
 async function startAnalysis() {
   if (!isXTab || !currentTabId) {
     showNotice('当前标签页不是 X 站点页面，请切到 x.com / twitter.com 页面后重试。', true);
@@ -175,7 +200,13 @@ async function startAnalysis() {
 
   try {
     const resp = await chrome.runtime.sendMessage({ action: 'startAnalysisForTab', tabId: currentTabId });
-    if (!resp?.ok) throw new Error(resp?.error || '启动分析失败');
+    if (!resp?.ok) {
+      if (resp?.needsConfig) {
+        showNotice(resp.error || '请先配置模型服务。', true, true);
+        return;
+      }
+      throw new Error(resp?.error || '启动分析失败');
+    }
     if (resp.alreadyRunning && resp.state) {
       applyAnalysisState(resp.state);
       startAnalysisPolling();
@@ -216,9 +247,11 @@ function setScanMsg(msg) {
   document.getElementById('scanning-msg').textContent = msg;
 }
 
-function showNotice(msg, isError) {
+function showNotice(msg, isError, showOptionsButton = false) {
   document.getElementById('no-results-icon').textContent = isError ? '⚠️' : '✅';
   document.getElementById('no-results-msg').textContent = msg;
+  document.getElementById('btn-open-options-from-notice').classList.toggle('hidden', !showOptionsButton);
+  document.getElementById('btn-retry').classList.toggle('hidden', Boolean(showOptionsButton));
   showView('noResults');
 }
 
@@ -252,7 +285,14 @@ function applyAnalysisState(state) {
 
   if (state.status === 'done') {
     scannedTweetCount = Number(state.scannedTweetCount || 0);
-    candidates = Array.isArray(state.candidates) ? state.candidates.map(c => ({ ...c })) : [];
+    candidates = Array.isArray(state.candidates)
+      ? state.candidates.map(c => ({
+          ...c,
+          selected: typeof c.selected === 'boolean'
+            ? c.selected
+            : Number(c.confidence || 0) >= 0.9
+        }))
+      : [];
     if (candidates.length === 0) {
       showNotice(`扫描了 ${scannedTweetCount} 条推文，未发现疑似垃圾账号。`, false);
       return;
@@ -284,8 +324,9 @@ function startAnalysisPolling() {
 }
 
 function renderResults() {
+  const selectedCount = candidates.filter(c => c.selected).length;
   document.getElementById('result-count').innerHTML =
-    `发现 <strong>${candidates.length}</strong> 个疑似账号`;
+    `发现 <strong>${candidates.length}</strong> 个疑似账号，已勾选 ${selectedCount} 个高置信项`;
   document.getElementById('tweet-count').textContent =
     `（扫描了 ${scannedTweetCount} 条推文）`;
 
@@ -358,7 +399,20 @@ async function resumeQueue() {
   refreshQueueStatus();
 }
 
+async function retryFailedQueue() {
+  await chrome.runtime.sendMessage({ action: 'retryFailedGlobalBlocking' });
+  refreshQueueStatus();
+}
+
+async function clearDoneQueue() {
+  await chrome.runtime.sendMessage({ action: 'clearDoneGlobalBlocking' });
+  refreshQueueStatus();
+}
+
 bindClick('btn-options', () => {
+  chrome.runtime.openOptionsPage();
+});
+bindClick('btn-open-options-from-notice', () => {
   chrome.runtime.openOptionsPage();
 });
 
@@ -369,6 +423,11 @@ bindClick('btn-retry', retryAnalysis);
 
 bindClick('btn-select-all', () => {
   candidates.forEach(c => { c.selected = true; });
+  renderResults();
+});
+
+bindClick('btn-select-high', () => {
+  candidates.forEach(c => { c.selected = Number(c.confidence || 0) >= 0.9; });
   renderResults();
 });
 
@@ -388,6 +447,8 @@ bindClick('btn-cancel-results', () => {
 
 bindClick('btn-queue-pause', pauseQueue);
 bindClick('btn-queue-resume', resumeQueue);
+bindClick('btn-queue-retry-failed', retryFailedQueue);
+bindClick('btn-queue-clear-done', clearDoneQueue);
 
 init().catch(() => {
   // Last-resort fallback: do not block manual analysis entry.
