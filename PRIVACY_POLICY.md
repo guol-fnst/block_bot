@@ -33,11 +33,7 @@ Block Bot uses the accessed data only for the following purposes:
 
 Block Bot does not send analyzed content to a Block Bot backend.
 
-If the user enables analysis, the extension sends candidate post data directly to the model service configured by the user. Depending on the user's settings, this may include:
-
-- Google Gemini
-- DeepSeek
-- Qwen
+If the user enables analysis, the extension sends candidate post data directly to the model service configured by the user. Depending on the user's settings, this may include Google Gemini, OpenAI, Anthropic, DeepSeek, Qwen, xAI, OpenRouter, Groq, Mistral AI, Together AI, SiliconFlow, Moonshot, Zhipu GLM, Volcengine Ark/Doubao, or another user-configured OpenAI-compatible endpoint.
 
 Those third-party services process data under their own terms and privacy policies. Users are responsible for choosing whether to use a given provider.
 

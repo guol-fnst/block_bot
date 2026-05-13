@@ -8,8 +8,11 @@ Block Bot – Chrome Web Store Reviewer Notes
 2. DATA FLOW
    Tweet content visible on the current page is scraped locally,
    then sent directly from the user's browser to their own
-   configured third-party AI model provider (Gemini, DeepSeek, or
-   Qwen) over HTTPS. No data is sent to Block Bot servers.
+   configured third-party AI model provider over HTTPS. Built-in
+   presets include Gemini, OpenAI, Anthropic, DeepSeek, Qwen, xAI,
+   OpenRouter, Groq, Mistral AI, Together AI, SiliconFlow, Moonshot,
+   Zhipu GLM, and Volcengine Ark/Doubao. The user can also configure
+   an OpenAI-compatible endpoint. No data is sent to Block Bot servers.
    The extension has no backend of its own.
 
 3. API KEY STORAGE
@@ -31,6 +34,9 @@ Block Bot – Chrome Web Store Reviewer Notes
    - scripting: Injects content script to scrape visible tweets and
      perform block UI interactions on x.com / twitter.com.
    - host_permissions (x.com, twitter.com): Required for the above scripting.
+   - host_permissions (model API hosts): Required for the extension
+     service worker to send analysis requests directly to the
+     user-configured third-party model provider.
 
 6. TEST ACCOUNT (if needed)
    You can test with any public X/Twitter account while logged in.

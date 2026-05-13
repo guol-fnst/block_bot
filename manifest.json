@@ -1,10 +1,30 @@
 {
   "manifest_version": 3,
   "name": "Block Bot",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Detect likely spam or bot accounts on X, then perform user-confirmed local blocking with rate limits.",
-  "permissions": ["storage", "tabs", "scripting"],
-  "host_permissions": ["https://x.com/*", "https://www.x.com/*", "https://twitter.com/*", "https://www.twitter.com/*"],
+  "permissions": ["storage", "tabs", "scripting", "permissions"],
+  "host_permissions": [
+    "https://x.com/*",
+    "https://www.x.com/*",
+    "https://twitter.com/*",
+    "https://www.twitter.com/*",
+    "https://generativelanguage.googleapis.com/*",
+    "https://api.openai.com/*",
+    "https://api.anthropic.com/*",
+    "https://api.deepseek.com/*",
+    "https://dashscope.aliyuncs.com/*",
+    "https://api.x.ai/*",
+    "https://openrouter.ai/*",
+    "https://api.groq.com/*",
+    "https://api.mistral.ai/*",
+    "https://api.together.xyz/*",
+    "https://api.siliconflow.cn/*",
+    "https://api.moonshot.cn/*",
+    "https://open.bigmodel.cn/*",
+    "https://ark.cn-beijing.volces.com/*"
+  ],
+  "optional_host_permissions": ["https://*/*"],
   "background": {
     "service_worker": "background/background.js"
   },

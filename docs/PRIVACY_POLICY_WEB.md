@@ -33,7 +33,7 @@ We use accessed data only to:
 
 Block Bot does not operate a proprietary analysis backend in the current version.
 
-If the user enables analysis, candidate data is sent directly from the browser to the user-configured third-party model provider (such as Google Gemini, DeepSeek, or Qwen). These providers process data under their own terms and privacy policies.
+If the user enables analysis, candidate data is sent directly from the browser to the user-configured third-party model provider, such as Google Gemini, OpenAI, Anthropic, DeepSeek, Qwen, xAI, OpenRouter, Groq, Mistral AI, Together AI, SiliconFlow, Moonshot, Zhipu GLM, Volcengine Ark/Doubao, or another user-configured OpenAI-compatible endpoint. These providers process data under their own terms and privacy policies.
 
 ## 5. Data Storage
 

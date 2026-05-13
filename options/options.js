@@ -4,11 +4,14 @@ const providerSel = document.getElementById('provider');
 const geminiFields = document.getElementById('gemini-fields');
 const openaiFields = document.getElementById('openai-fields');
 const openaiEndpointText = document.getElementById('openai-endpoint');
+const customUrlWrap = document.getElementById('custom-url-wrap');
 
 const geminiKeyInput = document.getElementById('gemini-key');
 const geminiModelSel = document.getElementById('gemini-model');
+const openaiUrlInput = document.getElementById('openai-url');
 const openaiModelInput = document.getElementById('openai-model');
 const openaiKeyInput = document.getElementById('openai-key');
+const modelSuggestions = document.getElementById('model-suggestions');
 const spamThresholdInput = document.getElementById('spam-threshold');
 const customPromptInput = document.getElementById('custom-prompt');
 
@@ -43,20 +46,109 @@ function normalizeThreshold(raw) {
 }
 
 const PRESETS = {
+  openai: {
+    url: 'https://api.openai.com/v1/chat/completions',
+    model: 'gpt-4o-mini',
+    label: '固定端点：api.openai.com',
+    apiType: 'openai_compat',
+    models: ['gpt-4o-mini', 'gpt-4o', 'gpt-4.1-mini', 'gpt-4.1']
+  },
+  anthropic: {
+    url: 'https://api.anthropic.com/v1/messages',
+    model: 'claude-sonnet-4-20250514',
+    label: '固定端点：api.anthropic.com · 使用 Anthropic Messages API',
+    apiType: 'anthropic',
+    models: ['claude-sonnet-4-20250514', 'claude-opus-4-20250514', 'claude-3-5-haiku-latest']
+  },
   deepseek: {
     url: 'https://api.deepseek.com/v1/chat/completions',
     model: 'deepseek-chat',
-    label: '固定端点：api.deepseek.com'
+    label: '固定端点：api.deepseek.com',
+    apiType: 'openai_compat',
+    models: ['deepseek-chat', 'deepseek-reasoner']
   },
   qwen: {
     url: 'https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions',
     model: 'qwen-plus',
-    label: '固定端点：dashscope.aliyuncs.com'
+    label: '固定端点：dashscope.aliyuncs.com',
+    apiType: 'openai_compat',
+    models: ['qwen-plus', 'qwen-max', 'qwen-turbo', 'qwen-long']
+  },
+  xai: {
+    url: 'https://api.x.ai/v1/chat/completions',
+    model: 'grok-4',
+    label: '固定端点：api.x.ai',
+    apiType: 'openai_compat',
+    models: ['grok-4', 'grok-3', 'grok-3-mini']
+  },
+  openrouter: {
+    url: 'https://openrouter.ai/api/v1/chat/completions',
+    model: 'openai/gpt-4o-mini',
+    label: '固定端点：openrouter.ai · 模型名使用 provider/model 格式',
+    apiType: 'openai_compat',
+    models: ['openai/gpt-4o-mini', 'anthropic/claude-sonnet-4.5', 'google/gemini-2.5-flash', 'deepseek/deepseek-chat']
+  },
+  groq: {
+    url: 'https://api.groq.com/openai/v1/chat/completions',
+    model: 'llama-3.3-70b-versatile',
+    label: '固定端点：api.groq.com',
+    apiType: 'openai_compat',
+    models: ['llama-3.3-70b-versatile', 'openai/gpt-oss-120b', 'openai/gpt-oss-20b']
+  },
+  mistral: {
+    url: 'https://api.mistral.ai/v1/chat/completions',
+    model: 'mistral-large-latest',
+    label: '固定端点：api.mistral.ai',
+    apiType: 'openai_compat',
+    models: ['mistral-large-latest', 'mistral-medium-latest', 'mistral-small-latest', 'ministral-8b-latest']
+  },
+  together: {
+    url: 'https://api.together.xyz/v1/chat/completions',
+    model: 'meta-llama/Llama-3.3-70B-Instruct-Turbo',
+    label: '固定端点：api.together.xyz',
+    apiType: 'openai_compat',
+    models: ['meta-llama/Llama-3.3-70B-Instruct-Turbo', 'Qwen/Qwen3.5-9B', 'deepseek-ai/DeepSeek-V3']
+  },
+  siliconflow: {
+    url: 'https://api.siliconflow.cn/v1/chat/completions',
+    model: 'Qwen/Qwen2.5-72B-Instruct',
+    label: '固定端点：api.siliconflow.cn',
+    apiType: 'openai_compat',
+    models: ['Qwen/Qwen2.5-72B-Instruct', 'deepseek-ai/DeepSeek-V3', 'THUDM/glm-4-9b-chat']
+  },
+  moonshot: {
+    url: 'https://api.moonshot.cn/v1/chat/completions',
+    model: 'moonshot-v1-8k',
+    label: '固定端点：api.moonshot.cn',
+    apiType: 'openai_compat',
+    models: ['moonshot-v1-8k', 'moonshot-v1-32k', 'moonshot-v1-128k']
+  },
+  zhipu: {
+    url: 'https://open.bigmodel.cn/api/paas/v4/chat/completions',
+    model: 'glm-4-flash',
+    label: '固定端点：open.bigmodel.cn',
+    apiType: 'openai_compat',
+    models: ['glm-4-flash', 'glm-4-plus', 'glm-4-air']
+  },
+  doubao: {
+    url: 'https://ark.cn-beijing.volces.com/api/v3/chat/completions',
+    model: '',
+    label: '固定端点：ark.cn-beijing.volces.com · 模型名填写火山方舟 Endpoint ID',
+    apiType: 'openai_compat',
+    models: ['请填写火山方舟 Endpoint ID']
+  },
+  custom_openai: {
+    url: '',
+    model: '',
+    label: '填写完整 OpenAI 兼容 chat/completions URL',
+    apiType: 'openai_compat',
+    models: ['gpt-4o-mini', 'deepseek-chat', 'qwen-plus', 'llama-3.3-70b-versatile']
   }
 };
 
 function normalizeProvider(provider) {
-  return provider === 'deepseek' || provider === 'qwen' || provider === 'gemini'
+  if (provider === 'openai_compat') return 'custom_openai';
+  return provider === 'gemini' || PRESETS[provider]
     ? provider
     : 'gemini';
 }
@@ -66,9 +158,23 @@ function applyPresetIfNeeded(provider, forceModelReset = false) {
   if (!p) return;
 
   openaiEndpointText.textContent = p.label;
+  customUrlWrap.classList.toggle('hidden', provider !== 'custom_openai');
+  if (provider !== 'custom_openai') {
+    openaiUrlInput.value = p.url;
+  }
+  renderModelSuggestions(p.models || []);
   if (forceModelReset || !openaiModelInput.value.trim()) {
     openaiModelInput.value = p.model;
   }
+}
+
+function renderModelSuggestions(models) {
+  modelSuggestions.innerHTML = '';
+  models.forEach(model => {
+    const option = document.createElement('option');
+    option.value = model;
+    modelSuggestions.appendChild(option);
+  });
 }
 
 chrome.storage.local.get(
@@ -77,6 +183,7 @@ chrome.storage.local.get(
     'geminiApiKey',
     'geminiModel',
     'openaiApiKey',
+    'openaiApiUrl',
     'openaiModel',
     'spamConfidenceThreshold',
     'customDetectionPrompt'
@@ -86,6 +193,7 @@ chrome.storage.local.get(
     geminiKeyInput.value = d.geminiApiKey || '';
     geminiModelSel.value = d.geminiModel || 'auto';
     openaiKeyInput.value = d.openaiApiKey || '';
+    openaiUrlInput.value = d.openaiApiUrl || '';
     openaiModelInput.value = d.openaiModel || '';
     spamThresholdInput.value = String(Math.round(normalizeThreshold(d.spamConfidenceThreshold) * 100));
     customPromptInput.value = (typeof d.customDetectionPrompt === 'string' && d.customDetectionPrompt.trim())
@@ -110,7 +218,7 @@ toggleOpenaiBtn.addEventListener('click', () => {
   openaiKeyInput.type = openaiKeyInput.type === 'password' ? 'text' : 'password';
 });
 
-saveBtn.addEventListener('click', () => {
+saveBtn.addEventListener('click', async () => {
   const selected = providerSel.value;
 
   if (selected === 'gemini') {
@@ -140,8 +248,13 @@ saveBtn.addEventListener('click', () => {
   }
 
   const apiKey = openaiKeyInput.value.trim();
+  const apiUrl = selected === 'custom_openai' ? openaiUrlInput.value.trim() : preset.url;
   const model = openaiModelInput.value.trim() || preset.model;
 
+  if (!apiUrl || !/^https:\/\/.+/i.test(apiUrl)) {
+    showMsg('请输入 https:// 开头的 API URL', false);
+    return;
+  }
   if (!model) {
     showMsg('请输入模型名', false);
     return;
@@ -151,13 +264,41 @@ saveBtn.addEventListener('click', () => {
     return;
   }
 
+  if (selected === 'custom_openai') {
+    const granted = await requestCustomEndpointPermission(apiUrl);
+    if (!granted) {
+      showMsg('未授予该 API 域名权限，无法保存自定义端点', false);
+      return;
+    }
+  }
+
   chrome.storage.local.set({
     llmProvider: selected,
-    openaiApiUrl: preset.url,
+    openaiApiUrl: apiUrl,
     openaiApiKey: apiKey,
-    openaiModel: model
-  }, () => showMsg(`${selected === 'deepseek' ? 'DeepSeek' : 'Qwen'} 配置已保存 ✓`, true));
+    openaiModel: model,
+    openaiApiType: preset.apiType
+  }, () => showMsg('模型配置已保存 ✓', true));
 });
+
+function requestCustomEndpointPermission(apiUrl) {
+  let origin;
+  try {
+    origin = new URL(apiUrl).origin;
+  } catch (_) {
+    return Promise.resolve(false);
+  }
+
+  return new Promise(resolve => {
+    chrome.permissions.request({ origins: [`${origin}/*`] }, granted => {
+      if (chrome.runtime.lastError) {
+        resolve(false);
+        return;
+      }
+      resolve(Boolean(granted));
+    });
+  });
+}
 
 function renderProviderFields(provider) {
   if (provider === 'gemini') {

@@ -13,14 +13,26 @@
     <section class="card">
       <h2>模型与 API 配置</h2>
       <p class="desc">
-        支持 Gemini、DeepSeek、Qwen 三个固定供应商。
+        支持 Gemini、Anthropic，以及主流 OpenAI 兼容接口；也可以填写自定义兼容端点。
       </p>
 
       <label class="field-label" for="provider">提供商</label>
       <select id="provider" class="input select-input">
         <option value="gemini">Gemini</option>
+        <option value="openai">OpenAI</option>
+        <option value="anthropic">Anthropic Claude</option>
         <option value="deepseek">DeepSeek（OpenAI 兼容）</option>
         <option value="qwen">Qwen（OpenAI 兼容）</option>
+        <option value="xai">xAI Grok（OpenAI 兼容）</option>
+        <option value="openrouter">OpenRouter（多模型路由）</option>
+        <option value="groq">Groq（OpenAI 兼容）</option>
+        <option value="mistral">Mistral AI（OpenAI 兼容）</option>
+        <option value="together">Together AI（OpenAI 兼容）</option>
+        <option value="siliconflow">SiliconFlow 硅基流动（OpenAI 兼容）</option>
+        <option value="moonshot">Moonshot Kimi（OpenAI 兼容）</option>
+        <option value="zhipu">智谱 GLM（OpenAI 兼容）</option>
+        <option value="doubao">火山方舟 Doubao（OpenAI 兼容）</option>
+        <option value="custom_openai">自定义 OpenAI 兼容接口</option>
       </select>
 
       <div id="gemini-fields">
@@ -34,8 +46,11 @@
         <select id="gemini-model" class="input select-input">
           <option value="auto">自动（3.1 Flash Lite 优先，404 时降级）</option>
           <option value="gemini-3.1-flash-lite">gemini-3.1-flash-lite</option>
+          <option value="gemini-2.5-pro">gemini-2.5-pro</option>
           <option value="gemini-2.5-flash-lite">gemini-2.5-flash-lite</option>
           <option value="gemini-2.5-flash">gemini-2.5-flash</option>
+          <option value="gemini-2.0-flash">gemini-2.0-flash</option>
+          <option value="gemini-2.0-flash-lite">gemini-2.0-flash-lite</option>
           <option value="gemini-1.5-flash">gemini-1.5-flash</option>
         </select>
 
@@ -55,14 +70,27 @@
       <div id="openai-fields" class="hidden">
         <p class="desc small" id="openai-endpoint"></p>
 
+        <div id="custom-url-wrap" class="hidden">
+          <label class="field-label" for="openai-url">API URL</label>
+          <input
+            id="openai-url"
+            class="input"
+            placeholder="https://api.example.com/v1/chat/completions"
+            autocomplete="off"
+            spellcheck="false"
+          />
+        </div>
+
         <label class="field-label" for="openai-model">Model</label>
         <input
           id="openai-model"
           class="input"
-          placeholder="deepseek-chat / qwen-plus"
+          list="model-suggestions"
+          placeholder="gpt-4o-mini / claude-sonnet-4-5 / deepseek-chat"
           autocomplete="off"
           spellcheck="false"
         />
+        <datalist id="model-suggestions"></datalist>
 
         <label class="field-label" for="openai-key">API Key</label>
         <div class="input-row">
@@ -140,7 +168,7 @@
         上架材料请同时提供仓库中的 <code>README.md</code> 与 <code>PRIVACY_POLICY.md</code>。
         隐私政策需要放到公开可访问的 URL 后再填写到 Chrome Web Store。
       </p>
-      <p class="desc version">版本 0.1.0 · MVP</p>
+      <p class="desc version">版本 0.1.1 · MVP</p>
     </section>
   </div>
 

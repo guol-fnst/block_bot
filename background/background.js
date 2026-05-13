@@ -10,8 +10,11 @@ const ANALYSIS_KEY_PREFIX = 'analysisCache:';
 
 const GEMINI_MODELS = [
   'gemini-3.1-flash-lite',
+  'gemini-2.5-pro',
   'gemini-2.5-flash-lite',
   'gemini-2.5-flash',
+  'gemini-2.0-flash',
+  'gemini-2.0-flash-lite',
   'gemini-1.5-flash'
 ];
 
@@ -441,6 +444,7 @@ async function getProviderConfig() {
     'openaiApiKey',
     'openaiApiUrl',
     'openaiModel',
+    'openaiApiType',
     'customDetectionPrompt'
   ]);
 
@@ -452,6 +456,7 @@ async function getProviderConfig() {
     openaiApiKey: d.openaiApiKey || '',
     openaiApiUrl: d.openaiApiUrl || '',
     openaiModel: d.openaiModel || '',
+    openaiApiType: d.openaiApiType || (provider === 'anthropic' ? 'anthropic' : 'openai_compat'),
     customDetectionPrompt: d.customDetectionPrompt || ''
   };
 }
@@ -546,12 +551,56 @@ async function analyzeBatchWithOpenAICompatible(batch, cfg) {
   return parseArrayFromModelText(rawText);
 }
 
+async function analyzeBatchWithAnthropic(batch, cfg) {
+  if (!cfg.openaiApiUrl) {
+    throw new Error('Anthropic API URL 未设置。');
+  }
+  if (!cfg.openaiApiKey) {
+    throw new Error('Anthropic API Key 未设置。');
+  }
+  if (!cfg.openaiModel) {
+    throw new Error('Anthropic 模型名未设置。');
+  }
+
+  const prompt = buildPrompt(batch, cfg.customDetectionPrompt);
+  const body = {
+    model: cfg.openaiModel,
+    max_tokens: 4096,
+    temperature: 0.1,
+    system: '你是一个严格输出 JSON 的分类助手。',
+    messages: [
+      { role: 'user', content: prompt }
+    ]
+  };
+
+  const resp = await fetch(cfg.openaiApiUrl, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-api-key': cfg.openaiApiKey,
+      'anthropic-version': '2023-06-01'
+    },
+    body: JSON.stringify(body)
+  });
+
+  if (!resp.ok) {
+    const errText = await resp.text().catch(() => '');
+    throw new Error(`Anthropic API 错误 (HTTP ${resp.status}): ${errText.slice(0, 200)}`);
+  }
+
+  const data = await resp.json();
+  const textParts = Array.isArray(data?.content)
+    ? data.content.filter(p => p?.type === 'text').map(p => p.text || '')
+    : [];
+  return parseArrayFromModelText(textParts.join('\n') || '[]');
+}
+
 async function analyzeBatch(batch, cfg) {
   if (cfg.provider === 'gemini') {
     return analyzeBatchWithGemini(batch, cfg);
   }
-  if (cfg.provider === 'deepseek' || cfg.provider === 'qwen' || cfg.provider === 'openai_compat') {
-    return analyzeBatchWithOpenAICompatible(batch, cfg);
+  if (cfg.provider === 'anthropic' || cfg.openaiApiType === 'anthropic') {
+    return analyzeBatchWithAnthropic(batch, cfg);
   }
   return analyzeBatchWithOpenAICompatible(batch, cfg);
 }
