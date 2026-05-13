@@ -190,6 +190,13 @@ async function startAnalysis() {
   startAnalysisPolling();
 }
 
+async function retryAnalysis() {
+  stopAnalysisPolling();
+  candidates = [];
+  await clearAnalysisState();
+  await startAnalysis();
+}
+
 function setScanMsg(msg) {
   document.getElementById('scanning-msg').textContent = msg;
 }
@@ -343,12 +350,7 @@ bindClick('btn-options', () => {
 bindClick('btn-analyze', startAnalysis);
 bindClick('btn-analyze-inline', startAnalysis);
 
-bindClick('btn-retry', () => {
-  clearAnalysisState();
-  stopAnalysisPolling();
-  candidates = [];
-  showView('idle');
-});
+bindClick('btn-retry', retryAnalysis);
 
 bindClick('btn-select-all', () => {
   candidates.forEach(c => { c.selected = true; });
