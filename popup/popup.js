@@ -69,8 +69,10 @@ async function getAnalysisState() {
 
 async function clearAnalysisState() {
   try {
-    await chrome.runtime.sendMessage({ action: 'clearAnalysisForTab', tabId: currentTabId });
+    const resp = await chrome.runtime.sendMessage({ action: 'clearAnalysisForTab', tabId: currentTabId });
+    return Boolean(resp?.ok);
   } catch (_) {}
+  return false;
 }
 
 async function getGlobalQueueStatus() {
@@ -174,6 +176,11 @@ async function startAnalysis() {
   try {
     const resp = await chrome.runtime.sendMessage({ action: 'startAnalysisForTab', tabId: currentTabId });
     if (!resp?.ok) throw new Error(resp?.error || '启动分析失败');
+    if (resp.alreadyRunning && resp.state) {
+      applyAnalysisState(resp.state);
+      startAnalysisPolling();
+      return;
+    }
 
     // Pull one immediate state update so UI doesn't appear stuck on startup text.
     const state = await getAnalysisState();
@@ -193,6 +200,14 @@ async function startAnalysis() {
 async function retryAnalysis() {
   stopAnalysisPolling();
   candidates = [];
+
+  const state = await getAnalysisState().catch(() => null);
+  if (state?.status === 'running') {
+    applyAnalysisState(state);
+    startAnalysisPolling();
+    return;
+  }
+
   await clearAnalysisState();
   await startAnalysis();
 }

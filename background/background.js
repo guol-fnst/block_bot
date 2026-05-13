@@ -10,6 +10,7 @@ const ANALYSIS_KEY_PREFIX = 'analysisCache:';
 const API_RETRY_MAX_ATTEMPTS = 4;
 const API_RETRY_BASE_DELAY_MS = 800;
 const API_RETRY_MAX_DELAY_MS = 8000;
+const API_FETCH_TIMEOUT_MS = 30000;
 
 const GEMINI_MODELS = [
   'gemini-3.1-flash-lite',
@@ -98,8 +99,16 @@ async function fetchWithRetry(url, options, label) {
   let lastError = null;
 
   for (let attempt = 1; attempt <= API_RETRY_MAX_ATTEMPTS; attempt++) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), API_FETCH_TIMEOUT_MS);
+
     try {
-      const resp = await fetch(url, options);
+      const resp = await fetch(url, {
+        ...options,
+        signal: controller.signal
+      });
+      clearTimeout(timer);
+
       if (resp.ok || !isRetryableHttpStatus(resp.status)) {
         return resp;
       }
@@ -116,6 +125,7 @@ async function fetchWithRetry(url, options, label) {
 
       throw err;
     } catch (e) {
+      clearTimeout(timer);
       lastError = e;
       if (e.httpStatus || attempt >= API_RETRY_MAX_ATTEMPTS) {
         throw e;
@@ -984,8 +994,25 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   }
 
   if (msg.action === 'startAnalysisForTab') {
+    if (runningTabs.has(msg.tabId)) {
+      getAnalysisState(msg.tabId)
+        .then(state => sendResponse({
+          ok: true,
+          alreadyRunning: true,
+          state: state || {
+            status: 'running',
+            scannedTweetCount: 0,
+            candidates: [],
+            error: '',
+            progressText: '分析任务仍在运行…'
+          }
+        }))
+        .catch(e => sendResponse({ ok: false, error: e.message }));
+      return true;
+    }
+
     startAnalysisForTab(msg.tabId);
-    sendResponse({ ok: true });
+    sendResponse({ ok: true, started: true });
     return false;
   }
 
@@ -997,6 +1024,11 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   }
 
   if (msg.action === 'clearAnalysisForTab') {
+    if (runningTabs.has(msg.tabId)) {
+      sendResponse({ ok: false, error: '分析任务仍在运行，暂不能清理状态。' });
+      return false;
+    }
+
     storageRemove([analysisKey(msg.tabId)])
       .then(() => sendResponse({ ok: true }))
       .catch(e => sendResponse({ ok: false, error: e.message }));
