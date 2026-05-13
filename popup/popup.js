@@ -466,6 +466,12 @@ function renderDeepScanStatus(status) {
   pauseBtn.disabled = !status.running || status.paused;
   cancelBtn.disabled = !status.running;
 
+  if (!status.running && status.error) {
+    stopDeepScanPolling();
+    showNotice('⚠️ 深度扫描失败：' + status.error, true);
+    return;
+  }
+
   if (status.completed) {
     stopDeepScanPolling();
     if (status.candidates && status.candidates.length > 0) {

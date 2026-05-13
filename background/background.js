@@ -50,6 +50,7 @@ const deepScanState = {
   repliesCollected: [],
   candidates: [],
   candidatesCount: 0,
+  completed: false,
   currentStep: '待启动',
   scannedPostUrls: new Set(),
   workerTabId: null,
@@ -1046,7 +1047,18 @@ function detectAutoReplyBots(batch, results) {
 
 function normalizeCandidates(results, threshold = CONFIDENCE_THRESHOLD) {
   const minConfidence = normalizeThreshold(threshold);
+  console.log(`[Normalize] 收到结果总数: ${results.length}, 置信度门槛: ${minConfidence}`);
+  
+  // Log all results before filtering
+  results.forEach((r, idx) => {
+    const reason = r.isSpamOrBot ? '✓ 是机器人' : '✗ 不是机器人';
+    const passThreshold = r.confidence >= minConfidence ? '✓' : '✗';
+    console.log(`  [${idx}] ${r.handle} (${r.displayName}) 置信度: ${(r.confidence || 0).toFixed(2)} ${passThreshold} ${reason}`);
+  });
+  
   const filtered = results.filter(r => r.isSpamOrBot && r.confidence >= minConfidence);
+  console.log(`[Normalize] 过滤后通过门槛的: ${filtered.length}`);
+  
   const byHandle = {};
 
   filtered.forEach(r => {
@@ -1217,7 +1229,7 @@ function getDeepScanStatusSnapshot() {
     repliesCount: deepScanState.repliesCount,
     candidatesCount: deepScanState.candidatesCount,
     currentStep: deepScanState.currentStep,
-    completed: !deepScanState.running && deepScanState.candidatesCount >= 0,
+    completed: deepScanState.completed,
     candidates: deepScanState.candidates,
     error: deepScanState.error
   };
@@ -1234,6 +1246,7 @@ async function startDeepScan(config) {
   deepScanState.repliesCollected = [];
   deepScanState.candidates = [];
   deepScanState.candidatesCount = 0;
+  deepScanState.completed = false;
   deepScanState.currentStep = '正在初始化…';
   deepScanState.scannedPostUrls = new Set();
   deepScanState.error = '';
@@ -1253,6 +1266,8 @@ async function performDeepScan(cfg) {
   const maxRepliesPerPost = deepScanState.config.maxRepliesPerPost || 100;
   const maxTotalReplies = deepScanState.config.maxTotalReplies || 1000;
 
+  console.log(`[DeepScan] 开始扫描 @${handle}, 配置: maxPosts=${maxPosts}, maxRepliesPerPost=${maxRepliesPerPost}, maxTotalReplies=${maxTotalReplies}`);
+
   try {
     deepScanState.currentStep = `正在打开 @${handle} 的主页…`;
     const profileUrl = `https://x.com/${handle}`;
@@ -1271,6 +1286,7 @@ async function performDeepScan(cfg) {
 
     deepScanState.currentStep = '正在采集最近的帖子链接…';
     const postUrls = await collectUserPostLinks(workerTab.id, maxPosts);
+    console.log(`[DeepScan] 采集到 ${postUrls.length} 条帖子链接`);
 
     if (deepScanState.cancelled) {
       deepScanState.running = false;
@@ -1307,12 +1323,15 @@ async function performDeepScan(cfg) {
       } catch (_) {}
 
       const replies = await collectPostReplies(workerTab.id, maxRepliesPerPost);
+      console.log(`[DeepScan] 第 ${i + 1} 条帖子采集到 ${replies.length} 条回复`);
       deepScanState.repliesCollected.push(...replies);
       deepScanState.repliesCount = deepScanState.repliesCollected.length;
+      console.log(`[DeepScan] 累计回复数: ${deepScanState.repliesCount}`);
 
       if (deepScanState.repliesCount >= maxTotalReplies) {
         deepScanState.repliesCollected = deepScanState.repliesCollected.slice(0, maxTotalReplies);
         deepScanState.repliesCount = maxTotalReplies;
+        console.log(`[DeepScan] 已达到总回复限制 ${maxTotalReplies}`);
         break;
       }
 
@@ -1320,24 +1339,42 @@ async function performDeepScan(cfg) {
     }
 
     if (deepScanState.repliesCollected.length === 0) {
+      console.log(`[DeepScan] 未找到任何回复`);
       deepScanState.running = false;
       deepScanState.currentStep = '未找到任何回复';
+      deepScanState.completed = true;
       return;
     }
 
-    deepScanState.currentStep = `正在分析 ${deepScanState.repliesCollected.length} 条回复…`;
-    const prefilter = splitObviousBotReplies(deepScanState.repliesCollected, cfg.obviousBotKeywords);
+    // Filter out the OP (original poster)
+    const opHandle = handle.toLowerCase();
+    const filteredReplies = deepScanState.repliesCollected.filter(
+      r => (r.handle || '').replace('@', '').toLowerCase() !== opHandle
+    );
+    console.log(`[DeepScan] 原始回复数: ${deepScanState.repliesCollected.length}, 排除OP后: ${filteredReplies.length}`);
+
+    deepScanState.currentStep = `正在分析 ${filteredReplies.length} 条回复…`;
+    const prefilter = splitObviousBotReplies(filteredReplies, cfg.obviousBotKeywords);
+    console.log(`[DeepScan] 本地预过滤 - 明显机器人: ${prefilter.localResults.length}, 需要模型分析: ${prefilter.modelTweets.length}`);
+    
     let results = [...prefilter.localResults];
 
     if (prefilter.modelTweets.length > 0) {
       const modelResults = await analyzeTweetsOptimized(prefilter.modelTweets, cfg);
+      console.log(`[DeepScan] 模型分析 - 返回结果数: ${modelResults.length}`);
       results.push(...modelResults);
       detectAutoReplyBots(prefilter.modelTweets, modelResults);
+      console.log(`[DeepScan] 自动回复检测后 - 总结果数: ${results.length}`);
     }
 
     deepScanState.candidates = normalizeCandidates(results, cfg.spamConfidenceThreshold);
+    console.log(`[DeepScan] 标准化候选人 (门槛: ${cfg.spamConfidenceThreshold}) - 最终: ${deepScanState.candidatesCount}`);
+    deepScanState.candidates.forEach(c => {
+      console.log(`  - ${c.handle} (${c.displayName}) 置信度: ${c.confidence.toFixed(2)}`);
+    });
     deepScanState.candidatesCount = deepScanState.candidates.length;
     deepScanState.currentStep = `扫描完成，找到 ${deepScanState.candidatesCount} 个疑似账号`;
+    deepScanState.completed = true;
 
     // Add to block queue
     if (deepScanState.candidatesCount > 0) {
@@ -1395,15 +1432,18 @@ async function collectUserPostLinks(tabId, maxLinks = 20) {
 
     if (links.length >= maxLinks) break;
 
-    if (result.length <= lastCount) {
+    if (links.length <= lastCount) {
       stagnantRounds++;
       if (stagnantRounds >= 2) break;
     } else {
       stagnantRounds = 0;
     }
 
-    lastCount = result.length;
-    window.scrollBy({ top: Math.max(window.innerHeight * 0.8, 600), behavior: 'auto' });
+    lastCount = links.length;
+    await executeInTab(tabId, () => {
+      window.scrollBy({ top: Math.max(window.innerHeight * 0.8, 600), behavior: 'auto' });
+      return true;
+    }).catch(() => {});
     await sleep(700);
   }
 
@@ -1483,15 +1523,18 @@ async function collectPostReplies(tabId, maxReplies = 100) {
 
     if (replies.length >= maxReplies) break;
 
-    if (result.length <= lastCount) {
+    if (replies.length <= lastCount) {
       stagnantRounds++;
       if (stagnantRounds >= 2) break;
     } else {
       stagnantRounds = 0;
     }
 
-    lastCount = result.length;
-    window.scrollBy({ top: Math.max(window.innerHeight * 0.8, 600), behavior: 'auto' });
+    lastCount = replies.length;
+    await executeInTab(tabId, () => {
+      window.scrollBy({ top: Math.max(window.innerHeight * 0.8, 600), behavior: 'auto' });
+      return true;
+    }).catch(() => {});
     await sleep(600);
   }
 
