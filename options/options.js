@@ -13,6 +13,7 @@ const openaiModelInput = document.getElementById('openai-model');
 const openaiKeyInput = document.getElementById('openai-key');
 const modelSuggestions = document.getElementById('model-suggestions');
 const spamThresholdInput = document.getElementById('spam-threshold');
+const obviousBotKeywordsInput = document.getElementById('obvious-bot-keywords');
 const customPromptInput = document.getElementById('custom-prompt');
 
 // Keep in sync with background.js defaultDetectionRules()
@@ -44,6 +45,21 @@ function normalizeThreshold(raw) {
   if (v < 0.5) return 0.5;
   if (v > 1) return 1;
   return v;
+}
+
+function parseKeywordList(text) {
+  const seen = new Set();
+  return String(text || '')
+    .split(/[\n,，、;；]+/)
+    .map(s => s.trim())
+    .filter(Boolean)
+    .filter(s => {
+      const key = s.toLowerCase();
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    })
+    .slice(0, 100);
 }
 
 const PRESETS = {
@@ -187,6 +203,7 @@ chrome.storage.local.get(
     'openaiApiUrl',
     'openaiModel',
     'spamConfidenceThreshold',
+    'obviousBotKeywords',
     'customDetectionPrompt'
   ],
   d => {
@@ -197,6 +214,9 @@ chrome.storage.local.get(
     openaiUrlInput.value = d.openaiApiUrl || '';
     openaiModelInput.value = d.openaiModel || '';
     spamThresholdInput.value = String(Math.round(normalizeThreshold(d.spamConfidenceThreshold) * 100));
+    obviousBotKeywordsInput.value = Array.isArray(d.obviousBotKeywords)
+      ? d.obviousBotKeywords.join('\n')
+      : '';
     customPromptInput.value = (typeof d.customDetectionPrompt === 'string' && d.customDetectionPrompt.trim())
       ? d.customDetectionPrompt
       : DEFAULT_DETECTION_RULES;
@@ -351,8 +371,11 @@ document.getElementById('btn-save-threshold').addEventListener('click', () => {
   }
 
   chrome.storage.local.set(
-    { spamConfidenceThreshold: normalizeThreshold(thresholdPct / 100) },
-    () => showThresholdMsg('阈值已保存 ✓', true)
+    {
+      spamConfidenceThreshold: normalizeThreshold(thresholdPct / 100),
+      obviousBotKeywords: parseKeywordList(obviousBotKeywordsInput.value)
+    },
+    () => showThresholdMsg('屏蔽策略已保存 ✓', true)
   );
 });
 

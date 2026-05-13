@@ -69,6 +69,11 @@ function isRetryableHttpStatus(status) {
   return status === 408 || status === 429 || (status >= 500 && status <= 599);
 }
 
+function shouldTryNextGeminiModel(error) {
+  const status = Number(error?.httpStatus || 0);
+  return status === 429 || (status >= 500 && status <= 599);
+}
+
 function parseRetryAfterMs(value) {
   if (!value) return null;
   const seconds = Number(value);
@@ -382,7 +387,6 @@ function enqueueBlockAccounts(accounts) {
 }
 
 async function runGlobalBlockQueue() {
-  const CONSECUTIVE_FAIL_LIMIT = 2;
   if (blockQueue.running) return;
 
   blockQueue.running = true;
@@ -422,14 +426,9 @@ async function runGlobalBlockQueue() {
           time: Date.now()
         });
 
-        if (blockQueue.consecutiveFails >= CONSECUTIVE_FAIL_LIMIT) {
-          blockQueue.paused = true;
-          blockQueue.errorMsg = `连续 ${CONSECUTIVE_FAIL_LIMIT} 次失败，已自动暂停。`;
-        }
       }
 
       recalcTotals();
-      if (blockQueue.paused) break;
 
       const hasPending = blockQueue.queue.some(i => i.status === 'pending');
       if (hasPending) {
@@ -553,6 +552,7 @@ async function getProviderConfig() {
     'openaiModel',
     'openaiApiType',
     'spamConfidenceThreshold',
+    'obviousBotKeywords',
     'customDetectionPrompt'
   ]);
 
@@ -566,6 +566,7 @@ async function getProviderConfig() {
     openaiModel: d.openaiModel || '',
     openaiApiType: d.openaiApiType || (provider === 'anthropic' ? 'anthropic' : 'openai_compat'),
     spamConfidenceThreshold: normalizeThreshold(d.spamConfidenceThreshold),
+    obviousBotKeywords: normalizeKeywordList(d.obviousBotKeywords),
     customDetectionPrompt: d.customDetectionPrompt || ''
   };
 }
@@ -630,7 +631,7 @@ async function analyzeBatchWithGemini(batch, cfg) {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(body)
         },
-        'Gemini API'
+        `Gemini API (${model})`
       );
 
       if (!resp.ok) {
@@ -646,6 +647,9 @@ async function analyzeBatchWithGemini(batch, cfg) {
     } catch (e) {
       lastError = e;
       if (e.httpStatus === 404 && i < modelList.length - 1) {
+        continue;
+      }
+      if (shouldTryNextGeminiModel(e) && i < modelList.length - 1) {
         continue;
       }
       throw e;
@@ -765,20 +769,16 @@ function shouldFallbackToChunk(error) {
 async function analyzeTweetsOptimized(tweets, cfg, onProgress) {
   if (!tweets || tweets.length === 0) return [];
 
-  // Prefer one-shot full analysis to reduce per-request overhead/token boilerplate.
-  try {
+  if (tweets.length <= BATCH_SIZE) {
     const all = await analyzeBatch(tweets, cfg);
     if (onProgress) {
       await onProgress(tweets.length, tweets.length);
     }
     return all;
-  } catch (e) {
-    if (!shouldFallbackToChunk(e)) {
-      throw e;
-    }
   }
 
-  // Fallback only when context/token size is too large.
+  // For larger pages, skip the one-shot request so we do not pay for a slow
+  // oversized call before falling back to chunking anyway.
   const results = [];
   for (let i = 0; i < tweets.length; i += BATCH_SIZE) {
     const batch = tweets.slice(i, i + BATCH_SIZE);
@@ -795,6 +795,175 @@ async function analyzeTweetsOptimized(tweets, cfg, onProgress) {
     }
   }
   return results;
+}
+
+function compactText(text) {
+  return String(text || '').replace(/\s+/g, '').trim();
+}
+
+function stripEmojiLikeChars(text) {
+  return String(text || '')
+    .replace(/[\p{Extended_Pictographic}\uFE0F]/gu, '')
+    .replace(/[^\p{L}\p{N}]/gu, '')
+    .trim();
+}
+
+const BUILT_IN_OBVIOUS_BOT_KEYWORDS = [
+  '同城',
+  '附近',
+  '约炮',
+  '约萢',
+  '速配',
+  '线下',
+  '无偿',
+  '免费',
+  '破处',
+  '男大',
+  '上门',
+  '外围',
+  '裸聊',
+  '私房',
+  '包夜',
+  '空降',
+  '兼职',
+  '援交',
+  '楼凤',
+  'onlyfans',
+  'escort',
+  'hookup',
+  'porn',
+  'nude',
+  'casino'
+];
+
+function normalizeKeywordList(keywords) {
+  const raw = Array.isArray(keywords)
+    ? keywords
+    : String(keywords || '').split(/[\n,，、;；]+/);
+  const seen = new Set();
+  return raw
+    .map(k => String(k || '').trim())
+    .filter(Boolean)
+    .filter(k => {
+      const key = k.toLowerCase();
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    })
+    .slice(0, 100);
+}
+
+function hasObviousBotKeyword(text, customKeywords = []) {
+  const value = String(text || '').toLowerCase();
+  if (!value) return false;
+  return BUILT_IN_OBVIOUS_BOT_KEYWORDS
+    .concat(normalizeKeywordList(customKeywords))
+    .some(keyword => value.includes(keyword.toLowerCase()));
+}
+
+function looksLikeRandomHandle(handle) {
+  const slug = String(handle || '').replace(/^@/, '');
+  return (
+    /^[A-Z][a-z]+[A-Z][a-z]+\d{3,}$/.test(slug) ||
+    /^[A-Za-z]{5,}\d{4,}$/.test(slug) ||
+    /^[a-z0-9_]{10,}$/.test(slug) && /\d{4,}/.test(slug) && /[a-z]/i.test(slug)
+  );
+}
+
+function isTinyTokenReply(text) {
+  const s = compactText(text);
+  if (!s) return true;
+  return (
+    /^[a-z]?\d{1,4}$/i.test(s) ||
+    /^[a-z]\d{1,3}[a-z]?$/i.test(s) ||
+    /^[\^~._-]?\d{1,4}$/.test(s)
+  );
+}
+
+function isEmojiOnlyOrEmojiNumberReply(text) {
+  const s = compactText(text);
+  if (!s) return false;
+  if (!/[\p{Extended_Pictographic}\uFE0F]/u.test(s)) return false;
+  return stripEmojiLikeChars(s).replace(/\d+/g, '') === '';
+}
+
+function detectObviousBotReply(tweet, customKeywords = []) {
+  const text = String(tweet?.text || '').trim();
+  const displayName = String(tweet?.displayName || '');
+  const handle = String(tweet?.handle || '');
+  const reasons = [];
+
+  const adultName = hasObviousBotKeyword(displayName, customKeywords) || hasObviousBotKeyword(handle, customKeywords);
+  const randomHandle = looksLikeRandomHandle(handle);
+  const tinyToken = isTinyTokenReply(text);
+  const emojiOnly = isEmojiOnlyOrEmojiNumberReply(text);
+
+  if (adultName) reasons.push('display name or handle contains adult/spam lure keywords');
+  if (randomHandle) reasons.push('handle looks randomly generated');
+  if (tinyToken) reasons.push('reply text is only a tiny token/number');
+  if (emojiOnly) reasons.push('reply text is only emoji or emoji plus numbers');
+
+  if ((adultName && (tinyToken || emojiOnly || randomHandle)) || (randomHandle && (tinyToken || emojiOnly))) {
+    return {
+      handle,
+      displayName,
+      isSpamOrBot: true,
+      confidence: 0.98,
+      reason: `Local prefilter: ${reasons.join(', ')}`,
+      evidenceTweet: text,
+      source: 'local-prefilter',
+      selected: true
+    };
+  }
+
+  if (emojiOnly) {
+    return {
+      handle,
+      displayName,
+      isSpamOrBot: true,
+      confidence: 0.9,
+      reason: `Local prefilter: ${reasons.join(', ')}`,
+      evidenceTweet: text,
+      source: 'local-prefilter',
+      selected: true
+    };
+  }
+
+  if (adultName && compactText(text).length <= 8) {
+    return {
+      handle,
+      displayName,
+      isSpamOrBot: true,
+      confidence: 0.95,
+      reason: `Local prefilter: ${reasons.join(', ')}`,
+      evidenceTweet: text,
+      source: 'local-prefilter',
+      selected: true
+    };
+  }
+
+  return null;
+}
+
+function splitObviousBotReplies(tweets, customKeywords = []) {
+  const localResults = [];
+  const modelTweets = [];
+  const seen = new Set();
+
+  (tweets || []).forEach(tweet => {
+    const hit = detectObviousBotReply(tweet, customKeywords);
+    if (hit?.handle) {
+      const key = hit.handle.toLowerCase();
+      if (!seen.has(key)) {
+        seen.add(key);
+        localResults.push(hit);
+      }
+      return;
+    }
+    modelTweets.push(tweet);
+  });
+
+  return { localResults, modelTweets };
 }
 
 // Simple Levenshtein-like similarity score for detecting near-duplicate messages
@@ -978,18 +1147,24 @@ async function startAnalysisForTab(tabId) {
     });
 
     const cfg = await getProviderConfig();
-    const results = await analyzeTweetsOptimized(tweets, cfg, async (done, total) => {
-      await setAnalysisState(tabId, {
-        status: 'running',
-        scannedTweetCount: total,
-        candidates: [],
-        error: '',
-        progressText: `正在分析：${done}/${total}`
-      });
-    });
+    const prefilter = splitObviousBotReplies(tweets, cfg.obviousBotKeywords);
+    const results = prefilter.localResults.slice();
 
-    // Detect coordinated copy-paste/auto-reply bots (multiple similar tweets)
-    detectAutoReplyBots(tweets, results);
+    if (prefilter.modelTweets.length > 0) {
+      const modelResults = await analyzeTweetsOptimized(prefilter.modelTweets, cfg, async (done, total) => {
+        await setAnalysisState(tabId, {
+          status: 'running',
+          scannedTweetCount: tweets.length,
+          candidates: [],
+          error: '',
+          progressText: `正在分析：${done}/${total}，已本地预过滤 ${prefilter.localResults.length} 个明显账号`
+        });
+      });
+      results.push(...modelResults);
+
+      // Detect coordinated copy-paste/auto-reply bots among tweets that still need model analysis.
+      detectAutoReplyBots(prefilter.modelTweets, modelResults);
+    }
 
     const candidates = normalizeCandidates(results, cfg.spamConfidenceThreshold);
     await setAnalysisState(tabId, {
@@ -1146,8 +1321,14 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     getProviderConfig()
       .then(async cfg => {
         const tweets = msg.tweets || [];
-        const all = await analyzeTweetsOptimized(tweets, cfg);
-        return normalizeCandidates(all, cfg.spamConfidenceThreshold);
+        const prefilter = splitObviousBotReplies(tweets, cfg.obviousBotKeywords);
+        const modelResults = prefilter.modelTweets.length > 0
+          ? await analyzeTweetsOptimized(prefilter.modelTweets, cfg)
+          : [];
+        if (modelResults.length > 0) {
+          detectAutoReplyBots(prefilter.modelTweets, modelResults);
+        }
+        return normalizeCandidates(prefilter.localResults.concat(modelResults), cfg.spamConfidenceThreshold);
       })
       .then(results => sendResponse({ ok: true, results }))
       .catch(e => sendResponse({ ok: false, error: e.message }));

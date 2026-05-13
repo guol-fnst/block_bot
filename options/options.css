@@ -79,6 +79,13 @@ h2 {
   line-height: 1.5;
 }
 
+.keyword-input {
+  min-height: 86px;
+  margin-bottom: 8px;
+  resize: vertical;
+  line-height: 1.5;
+}
+
 #openai-model {
   margin-bottom: 12px;
 }
