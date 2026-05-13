@@ -24,6 +24,10 @@ const GEMINI_MODELS = [
 
 const runningTabs = new Set();
 
+// 当前页面分析缓存：tabId => { scannedUserHandles: Set, currentUrl: string }
+// 用于避免重复分析同一用户
+const pageAnalysisCache = {};
+
 const blockQueue = {
   queue: [],
   running: false,
@@ -63,6 +67,75 @@ function geminiUrl(model) {
 
 function analysisKey(tabId) {
   return `${ANALYSIS_KEY_PREFIX}${tabId}`;
+}
+
+// ─── 页面分析缓存管理 ────────────────────────────────────────────────────────
+
+/**
+ * 初始化或更新 tab 缓存
+ * 如果 URL 变化，清空该 tab 的缓存
+ */
+function initPageAnalysisCache(tabId, url) {
+  if (!pageAnalysisCache[tabId]) {
+    pageAnalysisCache[tabId] = {
+      scannedUserHandles: new Set(),
+      currentUrl: url
+    };
+  } else if (pageAnalysisCache[tabId].currentUrl !== url) {
+    // URL 变化，清空缓存
+    console.log(`[Cache] Tab ${tabId} URL 变化，清空缓存: ${pageAnalysisCache[tabId].currentUrl} → ${url}`);
+    pageAnalysisCache[tabId] = {
+      scannedUserHandles: new Set(),
+      currentUrl: url
+    };
+  }
+}
+
+/**
+ * 添加已扫描的用户 handle
+ */
+function addScannedUserHandles(tabId, handles) {
+  if (!pageAnalysisCache[tabId]) return;
+  const before = pageAnalysisCache[tabId].scannedUserHandles.size;
+  (handles || []).forEach(handle => {
+    const key = String(handle || '').replace('@', '').toLowerCase();
+    pageAnalysisCache[tabId].scannedUserHandles.add(key);
+  });
+  const after = pageAnalysisCache[tabId].scannedUserHandles.size;
+  if (after > before) {
+    console.log(`[Cache] Tab ${tabId} 已扫描用户数: ${before} → ${after}`);
+  }
+}
+
+/**
+ * 过滤出新用户（未扫描过的）
+ * 返回需要分析的新用户
+ */
+function filterNewUsers(tabId, users) {
+  if (!pageAnalysisCache[tabId]) {
+    return users;
+  }
+  const cached = pageAnalysisCache[tabId].scannedUserHandles;
+  const newUsers = (users || []).filter(u => {
+    const key = String(u.handle || '').replace('@', '').toLowerCase();
+    return !cached.has(key);
+  });
+  
+  const skipped = (users || []).length - newUsers.length;
+  if (skipped > 0) {
+    console.log(`[Cache] Tab ${tabId} 跳过 ${skipped} 个已扫描用户，分析 ${newUsers.length} 个新用户`);
+  }
+  return newUsers;
+}
+
+/**
+ * 清空指定 tab 的缓存
+ */
+function clearPageAnalysisCache(tabId) {
+  if (pageAnalysisCache[tabId]) {
+    console.log(`[Cache] 清空 Tab ${tabId} 的缓存`);
+    delete pageAnalysisCache[tabId];
+  }
 }
 
 function sleep(ms) {
@@ -1139,6 +1212,12 @@ async function startAnalysisForTab(tabId) {
   runningTabs.add(tabId);
 
   try {
+    // 获取 tab URL，初始化缓存
+    const tab = await chrome.tabs.get(tabId).catch(() => null);
+    if (tab?.url) {
+      initPageAnalysisCache(tabId, tab.url);
+    }
+
     await setAnalysisState(tabId, {
       status: 'running',
       scannedTweetCount: 0,
@@ -1156,8 +1235,8 @@ async function startAnalysisForTab(tabId) {
       throw new Error(scrapeResp?.error || '采集失败');
     }
 
-    const tweets = scrapeResp.tweets || [];
-    if (tweets.length === 0) {
+    const allTweets = scrapeResp.tweets || [];
+    if (allTweets.length === 0) {
       await setAnalysisState(tabId, {
         status: 'empty',
         scannedTweetCount: 0,
@@ -1168,12 +1247,28 @@ async function startAnalysisForTab(tabId) {
       return;
     }
 
+    // 过滤出新用户（未扫描过的）
+    const tweets = filterNewUsers(tabId, allTweets);
+    const skippedCount = allTweets.length - tweets.length;
+    
+    if (tweets.length === 0) {
+      // 全部都是已扫描用户
+      await setAnalysisState(tabId, {
+        status: 'empty',
+        scannedTweetCount: allTweets.length,
+        candidates: [],
+        error: '',
+        progressText: skippedCount > 0 ? `已全部扫描（跳过 ${skippedCount} 个重复用户）` : ''
+      });
+      return;
+    }
+
     await setAnalysisState(tabId, {
       status: 'running',
-      scannedTweetCount: tweets.length,
+      scannedTweetCount: allTweets.length,
       candidates: [],
       error: '',
-      progressText: `正在分析 ${tweets.length} 条推文…`
+      progressText: `正在分析 ${tweets.length} 条新推文${skippedCount > 0 ? `（跳过 ${skippedCount} 个已扫描）` : ''}…`
     });
 
     const cfg = await getProviderConfig();
@@ -1184,7 +1279,7 @@ async function startAnalysisForTab(tabId) {
       const modelResults = await analyzeTweetsOptimized(prefilter.modelTweets, cfg, async (done, total) => {
         await setAnalysisState(tabId, {
           status: 'running',
-          scannedTweetCount: tweets.length,
+          scannedTweetCount: allTweets.length,
           candidates: [],
           error: '',
           progressText: `正在分析：${done}/${total}，已本地预过滤 ${prefilter.localResults.length} 个明显账号`
@@ -1197,9 +1292,14 @@ async function startAnalysisForTab(tabId) {
     }
 
     const candidates = normalizeCandidates(results, cfg.spamConfidenceThreshold);
+    
+    // 将已分析的用户加到缓存（包括本地预过滤和 LLM 分析的）
+    const analyzedHandles = tweets.map(t => t.handle);
+    addScannedUserHandles(tabId, analyzedHandles);
+    
     await setAnalysisState(tabId, {
       status: candidates.length > 0 ? 'done' : 'empty',
-      scannedTweetCount: tweets.length,
+      scannedTweetCount: allTweets.length,
       candidates,
       error: '',
       progressText: ''
@@ -1541,6 +1641,28 @@ async function collectPostReplies(tabId, maxReplies = 100) {
   return replies.slice(0, maxReplies);
 }
 
+// ── Tab 事件监听：页面分析缓存管理 ────────────────────────────────────────────
+/**
+ * 监听 tab URL 变化，清空旧缓存
+ */
+chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
+  if (changeInfo.status === 'complete' && tab.url && pageAnalysisCache[tabId]) {
+    const oldUrl = pageAnalysisCache[tabId].currentUrl;
+    if (oldUrl !== tab.url) {
+      console.log(`[Cache] Tab ${tabId} URL 变化，清空旧缓存`);
+      clearPageAnalysisCache(tabId);
+      initPageAnalysisCache(tabId, tab.url);
+    }
+  }
+});
+
+/**
+ * 监听 tab 关闭，清空缓存
+ */
+chrome.tabs.onRemoved.addListener(tabId => {
+  clearPageAnalysisCache(tabId);
+});
+
 // ── Message handler ───────────────────────────────────────────────────────────
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   if (msg.action === 'backgroundUiBlock') {
@@ -1663,6 +1785,9 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
       return false;
     }
 
+    // 清空分析缓存和页面分析缓存
+    clearPageAnalysisCache(msg.tabId);
+    
     storageRemove([analysisKey(msg.tabId)])
       .then(() => sendResponse({ ok: true }))
       .catch(e => sendResponse({ ok: false, error: e.message }));
