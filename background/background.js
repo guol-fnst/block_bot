@@ -7,6 +7,9 @@
 const BATCH_SIZE = 15;
 const CONFIDENCE_THRESHOLD = 0.8;
 const ANALYSIS_KEY_PREFIX = 'analysisCache:';
+const API_RETRY_MAX_ATTEMPTS = 4;
+const API_RETRY_BASE_DELAY_MS = 800;
+const API_RETRY_MAX_DELAY_MS = 8000;
 
 const GEMINI_MODELS = [
   'gemini-3.1-flash-lite',
@@ -59,6 +62,69 @@ function withTimeout(promise, timeoutMs, timeoutMsg) {
         reject(e);
       });
   });
+}
+
+function isRetryableHttpStatus(status) {
+  return status === 408 || status === 429 || (status >= 500 && status <= 599);
+}
+
+function parseRetryAfterMs(value) {
+  if (!value) return null;
+  const seconds = Number(value);
+  if (Number.isFinite(seconds)) {
+    return Math.max(0, seconds * 1000);
+  }
+
+  const dateMs = Date.parse(value);
+  if (!Number.isNaN(dateMs)) {
+    return Math.max(0, dateMs - Date.now());
+  }
+
+  return null;
+}
+
+function retryDelayMs(attemptIndex, retryAfterValue) {
+  const retryAfterMs = parseRetryAfterMs(retryAfterValue);
+  if (retryAfterMs !== null) {
+    return Math.min(retryAfterMs, API_RETRY_MAX_DELAY_MS);
+  }
+
+  const exponential = API_RETRY_BASE_DELAY_MS * (2 ** Math.max(0, attemptIndex - 1));
+  const jitter = Math.floor(Math.random() * 250);
+  return Math.min(exponential + jitter, API_RETRY_MAX_DELAY_MS);
+}
+
+async function fetchWithRetry(url, options, label) {
+  let lastError = null;
+
+  for (let attempt = 1; attempt <= API_RETRY_MAX_ATTEMPTS; attempt++) {
+    try {
+      const resp = await fetch(url, options);
+      if (resp.ok || !isRetryableHttpStatus(resp.status)) {
+        return resp;
+      }
+
+      const errText = await resp.text().catch(() => '');
+      const err = new Error(`${label} 错误 (HTTP ${resp.status}): ${errText.slice(0, 200)}`);
+      err.httpStatus = resp.status;
+      lastError = err;
+
+      if (attempt < API_RETRY_MAX_ATTEMPTS) {
+        await sleep(retryDelayMs(attempt, resp.headers?.get('retry-after')));
+        continue;
+      }
+
+      throw err;
+    } catch (e) {
+      lastError = e;
+      if (e.httpStatus || attempt >= API_RETRY_MAX_ATTEMPTS) {
+        throw e;
+      }
+      await sleep(retryDelayMs(attempt));
+    }
+  }
+
+  throw lastError || new Error(`${label} 请求失败`);
 }
 
 function storageGet(keys) {
@@ -483,11 +549,15 @@ async function analyzeBatchWithGemini(batch, cfg) {
   for (let i = 0; i < modelList.length; i++) {
     const model = modelList[i];
     try {
-      const resp = await fetch(`${geminiUrl(model)}?key=${encodeURIComponent(cfg.geminiApiKey)}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body)
-      });
+      const resp = await fetchWithRetry(
+        `${geminiUrl(model)}?key=${encodeURIComponent(cfg.geminiApiKey)}`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body)
+        },
+        'Gemini API'
+      );
 
       if (!resp.ok) {
         const errText = await resp.text().catch(() => '');
@@ -532,14 +602,18 @@ async function analyzeBatchWithOpenAICompatible(batch, cfg) {
     temperature: 0.1
   };
 
-  const resp = await fetch(cfg.openaiApiUrl, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${cfg.openaiApiKey}`
+  const resp = await fetchWithRetry(
+    cfg.openaiApiUrl,
+    {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${cfg.openaiApiKey}`
+      },
+      body: JSON.stringify(body)
     },
-    body: JSON.stringify(body)
-  });
+    'OpenAI 兼容 API'
+  );
 
   if (!resp.ok) {
     const errText = await resp.text().catch(() => '');
@@ -573,15 +647,19 @@ async function analyzeBatchWithAnthropic(batch, cfg) {
     ]
   };
 
-  const resp = await fetch(cfg.openaiApiUrl, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'x-api-key': cfg.openaiApiKey,
-      'anthropic-version': '2023-06-01'
+  const resp = await fetchWithRetry(
+    cfg.openaiApiUrl,
+    {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': cfg.openaiApiKey,
+        'anthropic-version': '2023-06-01'
+      },
+      body: JSON.stringify(body)
     },
-    body: JSON.stringify(body)
-  });
+    'Anthropic API'
+  );
 
   if (!resp.ok) {
     const errText = await resp.text().catch(() => '');
