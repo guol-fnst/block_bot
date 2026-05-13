@@ -19,6 +19,11 @@ If your X / Twitter timeline, search results, or reply sections are filled with 
 - Rate-limited block queue with progress display, pause, and resume controls.
 - Local settings and cache stored in Chrome extension storage.
 - Supports many AI providers and custom OpenAI-compatible endpoints.
+- Local prefilter before AI analysis for obvious bot replies, including emoji-only replies, emoji-plus-number replies, tiny token replies, random-looking handles, and configurable spam keywords.
+- User-configurable local prefilter keywords in the options page.
+- Chunked AI analysis for larger reply pages to avoid oversized model requests.
+- Gemini fallback across available Gemini models when a model is overloaded or temporarily unavailable.
+- Blocking queue continues after individual account failures and processes the remaining pending accounts until the queue finishes.
 
 中文功能概览：
 
@@ -85,6 +90,18 @@ Block Bot only runs on `x.com` and `twitter.com`. When the user starts an analys
 Block Bot does not run a proprietary backend service in the current version. The analyzed content is not sent to Block Bot servers. If the user confirms block actions, the extension uses the current logged-in X session in the local browser to perform rate-limited blocking. If the current page cannot complete a specific block action, the extension may temporarily open a background X tab to finish that user-confirmed task.
 
 中文说明：扩展只在 `x.com` 与 `twitter.com` 页面运行。它会读取当前页面已经渲染出来的推文内容、账号 handle、显示名称、推文链接和资料页链接，然后把候选数据发送到用户在设置页中选择的模型服务进行分类分析。屏蔽动作不会通过 Block Bot 自己的服务器执行。
+
+### Local Prefilter Before AI
+
+Before calling the configured AI provider, Block Bot applies a conservative local prefilter for replies that are already obvious bot or spam patterns. Examples include display names or handles containing spam keywords, random-looking handles paired with tiny numeric replies, emoji-only replies, and emoji-plus-number replies. These local matches are added directly to the candidate list as `Local prefilter` results, while the remaining replies continue to AI analysis.
+
+Users can add extra local prefilter keywords from the options page. Keywords match account display names and handles, and are combined with built-in keywords such as adult-spam and engagement-spam terms. The prefilter still combines keyword matches with other signals, such as very short reply text or random-looking handles, to reduce accidental matches.
+
+### Large Pages and Model Reliability
+
+For larger reply pages, Block Bot sends posts to the model in chunks instead of making one oversized request first. This reduces timeout and token-limit failures. For Gemini, if one model is temporarily overloaded or unavailable, Block Bot can retry and then move to the next configured Gemini fallback model.
+
+When a confirmed block task fails for one account, the queue records that account as failed and continues processing the remaining pending accounts. The user can review failed items afterward and retry them manually.
 
 ## Privacy / 隐私说明
 
