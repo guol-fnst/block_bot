@@ -507,6 +507,9 @@ function renderDeepScanStatus(status) {
     } else {
       showNotice(`深度扫描完成，未找到疑似账号。`, false);
     }
+    // Clear the completed flag in the background so re-opening the popup
+    // does not replay the same results again.
+    chrome.runtime.sendMessage({ action: 'clearDeepScanCompleted' }).catch(() => {});
   }
 }
 

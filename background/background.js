@@ -12,6 +12,10 @@ const API_RETRY_BASE_DELAY_MS = 800;
 const API_RETRY_MAX_DELAY_MS = 8000;
 const API_FETCH_TIMEOUT_MS = 30000;
 
+const PERSIST_BLOCK_QUEUE_KEY = 'blockQueueState';
+const PERSIST_DEEP_SCAN_KEY  = 'deepScanPersist';
+const CIRCUIT_BREAKER_THRESHOLD = 5;
+
 const GEMINI_MODELS = [
   'gemini-3.1-flash-lite',
   'gemini-2.5-pro',
@@ -246,6 +250,101 @@ function storageRemove(keys) {
   return new Promise(resolve => chrome.storage.local.remove(keys, resolve));
 }
 
+// ─── 状态持久化（防止 Service Worker 重启丢数据）─────────────────────────────
+
+/**
+ * 将屏蔽队列关键字段写入 storage。
+ * 在 recalcTotals / pause / resume 等关键节点触发（fire-and-forget）。
+ */
+function saveBlockQueueState() {
+  // Trim log to last 50 entries before persisting.
+  if (blockQueue.log.length > 50) {
+    blockQueue.log.splice(0, blockQueue.log.length - 50);
+  }
+  storageSet({
+    [PERSIST_BLOCK_QUEUE_KEY]: {
+      queue:    blockQueue.queue.map(i => ({ ...i })),
+      log:      blockQueue.log.slice(),
+      paused:   blockQueue.paused,
+      errorMsg: blockQueue.errorMsg
+    }
+  }).catch(e => console.warn('[Persist] saveBlockQueueState failed:', e));
+}
+
+/**
+ * 将 Deep Scan 关键字段写入 storage。
+ * 在扫描完成、出错、步骤里程碑时触发（fire-and-forget）。
+ */
+function saveDeepScanState() {
+  storageSet({
+    [PERSIST_DEEP_SCAN_KEY]: {
+      running:         deepScanState.running,
+      handle:          deepScanState.handle,
+      config:          deepScanState.config,
+      postsCount:      deepScanState.postsCount,
+      repliesCount:    deepScanState.repliesCount,
+      candidatesCount: deepScanState.candidatesCount,
+      completed:       deepScanState.completed,
+      currentStep:     deepScanState.currentStep,
+      error:           deepScanState.error,
+      // Only persist candidates when the scan has finished; avoid bloat mid-run.
+      candidates:      deepScanState.completed ? deepScanState.candidates : []
+    }
+  }).catch(e => console.warn('[Persist] saveDeepScanState failed:', e));
+}
+
+/**
+ * Service Worker 启动时从 storage 恢复上次状态。
+ * blockQueue 中处于 'running' 的条目（上次被中断）回退为 'pending'。
+ * deepScanState 如果上次正在运行则标记为中断错误；若已完成则保留结果。
+ */
+async function restorePersistedState() {
+  const data = await storageGet([PERSIST_BLOCK_QUEUE_KEY, PERSIST_DEEP_SCAN_KEY]);
+
+  const bq = data[PERSIST_BLOCK_QUEUE_KEY];
+  if (bq) {
+    blockQueue.queue = (bq.queue || []).map(i => ({
+      ...i,
+      // Items that were mid-block when the SW died must be retried.
+      status: i.status === 'running' ? 'pending' : i.status
+    }));
+    blockQueue.log     = bq.log     || [];
+    blockQueue.paused  = bq.paused  || false;
+    blockQueue.errorMsg= bq.errorMsg|| '';
+    recalcTotals();
+    console.log(`[Persist] Restored blockQueue: ${blockQueue.queue.length} items`);
+  }
+
+  const ds = data[PERSIST_DEEP_SCAN_KEY];
+  if (ds) {
+    deepScanState.handle          = ds.handle          || '';
+    deepScanState.config          = ds.config          || {};
+    deepScanState.postsCount      = ds.postsCount      || 0;
+    deepScanState.repliesCount    = ds.repliesCount    || 0;
+    deepScanState.candidatesCount = ds.candidatesCount || 0;
+    deepScanState.completed       = ds.completed       || false;
+    deepScanState.candidates      = ds.candidates      || [];
+
+    if (ds.running && !ds.completed) {
+      // SW was killed while scan was in progress – cannot resume, show error.
+      deepScanState.running     = false;
+      deepScanState.error       = 'Service Worker 已重启，扫描中断。请重新发起深度扫描。';
+      deepScanState.currentStep = '扫描已中断（后台进程重启）';
+    } else {
+      deepScanState.error       = ds.error       || '';
+      deepScanState.currentStep = ds.currentStep || '';
+    }
+    console.log(`[Persist] Restored deepScanState: handle=${deepScanState.handle} completed=${deepScanState.completed} error=${deepScanState.error}`);
+  }
+}
+
+// Restore persisted state as soon as the service worker starts.
+// By the time the first message arrives (requires a popup round-trip),
+// this IIFE will have already completed.
+(async () => {
+  try { await restorePersistedState(); } catch (e) { console.error('[Persist] Restore failed:', e); }
+})();
+
 function tabsCreate(url, active = false) {
   return new Promise((resolve, reject) => {
     chrome.tabs.create({ url, active }, tab => {
@@ -426,9 +525,11 @@ function getBlockStatusSnapshot() {
 }
 
 function recalcTotals() {
-  blockQueue.total = blockQueue.queue.length;
-  blockQueue.done = blockQueue.queue.filter(i => i.status === 'done').length;
+  blockQueue.total  = blockQueue.queue.length;
+  blockQueue.done   = blockQueue.queue.filter(i => i.status === 'done').length;
   blockQueue.failed = blockQueue.queue.filter(i => i.status === 'failed').length;
+  // Persist after every status change so SW restarts lose at most one item.
+  saveBlockQueueState();
 }
 
 function retryFailedBlockItems() {
@@ -518,6 +619,14 @@ async function runGlobalBlockQueue() {
           time: Date.now()
         });
 
+        // Circuit breaker: auto-pause after N consecutive failures so a dead
+        // X session doesn’t silently spin through the entire queue.
+        if (blockQueue.consecutiveFails >= CIRCUIT_BREAKER_THRESHOLD) {
+          blockQueue.paused   = true;
+          blockQueue.errorMsg = `连续失败 ${blockQueue.consecutiveFails} 次，已自动暂停。请检查 X 登录状态后点击「继续」重试。`;
+          recalcTotals();
+          break;
+        }
       }
 
       recalcTotals();
@@ -1501,9 +1610,11 @@ async function performDeepScan(cfg) {
     }
 
     deepScanState.running = false;
+    saveDeepScanState();
   } catch (e) {
     deepScanState.error = e.message;
     deepScanState.running = false;
+    saveDeepScanState();
   } finally {
     // Clean up worker tab
     if (deepScanState.workerTabId) {
@@ -1759,7 +1870,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   }
 
   if (msg.action === 'retryFailedGlobalBlocking') {
-    const retried = retryFailedBlockItems();
+    const retried = retryFailedBlockItems(); // recalcTotals → saveBlockQueueState inside
     if (retried > 0) {
       runGlobalBlockQueue();
     }
@@ -1768,22 +1879,36 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   }
 
   if (msg.action === 'clearDoneGlobalBlocking') {
-    const cleared = clearCompletedBlockItems();
+    const cleared = clearCompletedBlockItems(); // recalcTotals → saveBlockQueueState inside
     sendResponse({ ok: true, cleared, status: getBlockStatusSnapshot() });
     return false;
   }
 
+  if (msg.action === 'clearDeepScanCompleted') {
+    deepScanState.completed       = false;
+    deepScanState.candidates      = [];
+    deepScanState.candidatesCount = 0;
+    deepScanState.error           = '';
+    deepScanState.currentStep     = '';
+    saveDeepScanState();
+    sendResponse({ ok: true });
+    return false;
+  }
+
   if (msg.action === 'pauseGlobalBlocking') {
-    blockQueue.paused = true;
-    blockQueue.running = false;
-    blockQueue.current = null;
+    blockQueue.paused   = true;
+    blockQueue.running  = false;
+    blockQueue.current  = null;
+    saveBlockQueueState();
     sendResponse({ ok: true, status: getBlockStatusSnapshot() });
     return false;
   }
 
   if (msg.action === 'resumeGlobalBlocking') {
-    blockQueue.paused = false;
+    blockQueue.paused   = false;
     blockQueue.errorMsg = '';
+    blockQueue.consecutiveFails = 0;
+    saveBlockQueueState();
     runGlobalBlockQueue();
     sendResponse({ ok: true, status: getBlockStatusSnapshot() });
     return false;
