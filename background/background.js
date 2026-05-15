@@ -634,6 +634,24 @@ function normalizeThreshold(raw) {
   return v;
 }
 
+function normalizeOpenAICompatibleApiUrl(rawUrl) {
+  const trimmed = String(rawUrl || '').trim();
+  if (!trimmed) return '';
+
+  try {
+    const url = new URL(trimmed);
+    const path = url.pathname.replace(/\/+$/, '');
+    if (path === '' || path === '/v1') {
+      url.pathname = `${path || '/v1'}/chat/completions`;
+      return url.toString();
+    }
+  } catch (_) {
+    return trimmed;
+  }
+
+  return trimmed;
+}
+
 async function getProviderConfig() {
   const d = await storageGet([
     'llmProvider',
@@ -654,7 +672,7 @@ async function getProviderConfig() {
     geminiApiKey: d.geminiApiKey || '',
     geminiModel: d.geminiModel || 'auto',
     openaiApiKey: d.openaiApiKey || '',
-    openaiApiUrl: d.openaiApiUrl || '',
+    openaiApiUrl: normalizeOpenAICompatibleApiUrl(d.openaiApiUrl),
     openaiModel: d.openaiModel || '',
     openaiApiType: d.openaiApiType || (provider === 'anthropic' ? 'anthropic' : 'openai_compat'),
     spamConfidenceThreshold: normalizeThreshold(d.spamConfidenceThreshold),

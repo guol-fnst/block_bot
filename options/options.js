@@ -62,6 +62,24 @@ function parseKeywordList(text) {
     .slice(0, 100);
 }
 
+function normalizeOpenAICompatibleApiUrl(rawUrl) {
+  const trimmed = String(rawUrl || '').trim();
+  if (!trimmed) return '';
+
+  try {
+    const url = new URL(trimmed);
+    const path = url.pathname.replace(/\/+$/, '');
+    if (path === '' || path === '/v1') {
+      url.pathname = `${path || '/v1'}/chat/completions`;
+      return url.toString();
+    }
+  } catch (_) {
+    return trimmed;
+  }
+
+  return trimmed;
+}
+
 const PRESETS = {
   openai: {
     url: 'https://api.openai.com/v1/chat/completions',
@@ -157,7 +175,7 @@ const PRESETS = {
   custom_openai: {
     url: '',
     model: '',
-    label: '填写完整 OpenAI 兼容 chat/completions URL',
+    label: '填写 OpenAI 兼容 base URL 或完整 chat/completions URL',
     apiType: 'openai_compat',
     models: ['gpt-4o-mini', 'deepseek-chat', 'qwen-plus', 'llama-3.3-70b-versatile']
   }
@@ -274,11 +292,13 @@ async function saveProviderConfig(showSuccess = true) {
   }
 
   const apiKey = openaiKeyInput.value.trim();
-  const apiUrl = selected === 'custom_openai' ? openaiUrlInput.value.trim() : preset.url;
+  const apiUrl = selected === 'custom_openai'
+    ? normalizeOpenAICompatibleApiUrl(openaiUrlInput.value)
+    : preset.url;
   const model = openaiModelInput.value.trim() || preset.model;
 
-  if (!apiUrl || !/^https:\/\/.+/i.test(apiUrl)) {
-    showMsg('请输入 https:// 开头的 API URL', false);
+  if (!apiUrl || !/^https?:\/\/.+/i.test(apiUrl)) {
+    showMsg('请输入 http:// 或 https:// 开头的 API URL', false);
     return false;
   }
   if (!model) {

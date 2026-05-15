@@ -24,7 +24,7 @@
     "https://open.bigmodel.cn/*",
     "https://ark.cn-beijing.volces.com/*"
   ],
-  "optional_host_permissions": ["https://*/*"],
+  "optional_host_permissions": ["http://*/*", "https://*/*"],
   "background": {
     "service_worker": "background/background.js"
   },
