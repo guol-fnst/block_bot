@@ -3,7 +3,7 @@
   "name": "Block Bot",
   "version": "0.1.1",
   "description": "Detect likely spam or bot accounts on X, then perform user-confirmed local blocking with rate limits.",
-  "permissions": ["storage", "tabs", "scripting", "permissions"],
+  "permissions": ["storage", "tabs", "scripting"],
   "host_permissions": [
     "https://x.com/*",
     "https://www.x.com/*",

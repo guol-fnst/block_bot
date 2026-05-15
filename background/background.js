@@ -1403,7 +1403,7 @@ async function performDeepScan(cfg) {
     } catch (_) {}
 
     deepScanState.currentStep = '正在采集最近的帖子链接…';
-    const postUrls = await collectUserPostLinks(workerTab.id, maxPosts);
+    const postUrls = await collectUserPostLinks(workerTab.id, maxPosts, handle);
     console.log(`[DeepScan] 采集到 ${postUrls.length} 条帖子链接`);
 
     if (deepScanState.cancelled) {
@@ -1453,7 +1453,7 @@ async function performDeepScan(cfg) {
         break;
       }
 
-      await sleep(600);
+      await sleep(1500);
     }
 
     if (deepScanState.repliesCollected.length === 0) {
@@ -1486,11 +1486,11 @@ async function performDeepScan(cfg) {
     }
 
     deepScanState.candidates = normalizeCandidates(results, cfg.spamConfidenceThreshold);
+    deepScanState.candidatesCount = deepScanState.candidates.length;
     console.log(`[DeepScan] 标准化候选人 (门槛: ${cfg.spamConfidenceThreshold}) - 最终: ${deepScanState.candidatesCount}`);
     deepScanState.candidates.forEach(c => {
       console.log(`  - ${c.handle} (${c.displayName}) 置信度: ${c.confidence.toFixed(2)}`);
     });
-    deepScanState.candidatesCount = deepScanState.candidates.length;
     deepScanState.currentStep = `扫描完成，找到 ${deepScanState.candidatesCount} 个疑似账号`;
     deepScanState.completed = true;
 
@@ -1522,13 +1522,15 @@ function continueDeepScan() {
   }
 }
 
-async function collectUserPostLinks(tabId, maxLinks = 20) {
+async function collectUserPostLinks(tabId, maxLinks = 20, targetHandle = '') {
   const links = [];
   let lastCount = 0;
   let stagnantRounds = 0;
+  // Normalise handle for path matching: "@foo" or "foo" → "/foo/"
+  const handleSlug = targetHandle.replace(/^@/, '').toLowerCase();
 
   for (let i = 0; i < 15; i++) {
-    const result = await executeInTab(tabId, () => {
+    const result = await executeInTab(tabId, (slug) => {
       const posts = [];
       const articles = document.querySelectorAll('article[data-testid="tweet"]');
       articles.forEach(article => {
@@ -1536,15 +1538,19 @@ async function collectUserPostLinks(tabId, maxLinks = 20) {
           const timeEl = article.querySelector('time');
           const statusA = timeEl ? timeEl.closest('a') : null;
           const statusPath = statusA ? statusA.getAttribute('href') || '' : '';
-          const match = statusPath.match(/\/status\/\d+/);
-          if (match) {
-            const url = `https://x.com${statusPath}`;
-            if (!posts.includes(url)) posts.push(url);
-          }
+          // Bug 3 fix: only collect posts that belong to the target blogger.
+          // A post URL follows the pattern "/{handle}/status/{id}", so we
+          // verify the path starts with the expected user segment.
+          if (!statusPath) return;
+          const pathLower = statusPath.toLowerCase();
+          const expectedPrefix = `/${slug}/status/`;
+          if (!pathLower.startsWith(expectedPrefix)) return;
+          const url = `https://x.com${statusPath}`;
+          if (!posts.includes(url)) posts.push(url);
         } catch (_) {}
       });
       return posts;
-    }).catch(() => []);
+    }, [handleSlug]).catch(() => []);
 
     links.push(...result.filter(link => !links.includes(link)));
 
@@ -1552,7 +1558,7 @@ async function collectUserPostLinks(tabId, maxLinks = 20) {
 
     if (links.length <= lastCount) {
       stagnantRounds++;
-      if (stagnantRounds >= 2) break;
+      if (stagnantRounds >= 3) break;
     } else {
       stagnantRounds = 0;
     }
@@ -1562,21 +1568,56 @@ async function collectUserPostLinks(tabId, maxLinks = 20) {
       window.scrollBy({ top: Math.max(window.innerHeight * 0.8, 600), behavior: 'auto' });
       return true;
     }).catch(() => {});
-    await sleep(700);
+    await sleep(1200);
   }
 
   return links.slice(0, maxLinks);
 }
 
+/**
+ * Poll until at least `minCount` article[data-testid="tweet"] elements exist
+ * in the tab's DOM, or until `timeoutMs` elapses.
+ * Returns true if the target count was reached, false on timeout.
+ */
+async function waitForRepliesRendered(tabId, minCount = 2, timeoutMs = 10000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const count = await executeInTab(tabId, () =>
+      document.querySelectorAll('article[data-testid="tweet"]').length
+    ).catch(() => 0);
+    if (count >= minCount) return true;
+    await sleep(300);
+  }
+  return false;
+}
+
 async function collectPostReplies(tabId, maxReplies = 100) {
+  // Bug 4 fix: we no longer deduplicate by handle across the entire function.
+  // Each scroll round deduplicates only within itself (via the in-page `seen`
+  // Set), but the same user can appear in multiple rounds with different tweet
+  // texts. This lets detectAutoReplyBots() compare multiple messages per user
+  // and identify copy-paste / template bots.
   const replies = [];
+  // Track unique (handle, tweetUrl) pairs so we do not add the exact same
+  // tweet twice (e.g. when the same article is still visible after a scroll).
+  const seenKeys = new Set();
   let lastCount = 0;
   let stagnantRounds = 0;
+
+  // X.com is a SPA: tab status=complete fires before React has rendered reply
+  // articles. Wait until at least 2 articles are present (index 0 = original
+  // tweet, index 1+ = replies) before starting the scroll loop.
+  const repliesAppeared = await waitForRepliesRendered(tabId, 2, 10000);
+  if (!repliesAppeared) {
+    console.log('[DeepScan] collectPostReplies: 等待回复节点超时，跳过此帖');
+    return [];
+  }
 
   for (let i = 0; i < 12; i++) {
     const result = await executeInTab(tabId, () => {
       const tweets = [];
       const articles = document.querySelectorAll('article[data-testid="tweet"]');
+      // Deduplicate within this single DOM snapshot only.
       const seen = new Set();
 
       articles.forEach(article => {
@@ -1597,8 +1638,16 @@ async function collectPostReplies(tabId, maxReplies = 100) {
           }
 
           if (!handle) return;
-          if (seen.has(handle.toLowerCase())) return;
-          seen.add(handle.toLowerCase());
+
+          const timeEl = article.querySelector('time');
+          const statusA = timeEl ? timeEl.closest('a') : null;
+          const statusPath = statusA ? statusA.getAttribute('href') || '' : '';
+          const tweetUrl = statusPath ? `https://x.com${statusPath}` : '';
+
+          // Deduplicate within this snapshot by (handle, tweetUrl).
+          const snapKey = `${handle.toLowerCase()}|${tweetUrl}`;
+          if (seen.has(snapKey)) return;
+          seen.add(snapKey);
 
           let displayName = '';
           const spans = userNameBlock.querySelectorAll('span');
@@ -1612,11 +1661,6 @@ async function collectPostReplies(tabId, maxReplies = 100) {
 
           const textEl = article.querySelector('[data-testid="tweetText"]');
           const text = textEl ? textEl.innerText.trim() : '';
-
-          const timeEl = article.querySelector('time');
-          const statusA = timeEl ? timeEl.closest('a') : null;
-          const statusPath = statusA ? statusA.getAttribute('href') || '' : '';
-          const tweetUrl = statusPath ? `https://x.com${statusPath}` : '';
 
           if (text) {
             tweets.push({
@@ -1633,8 +1677,12 @@ async function collectPostReplies(tabId, maxReplies = 100) {
       return tweets;
     }).catch(() => []);
 
+    // Merge into replies, deduplicating only by exact (handle, tweetUrl) key
+    // so different tweets from the same user are all preserved.
     result.forEach(r => {
-      if (!replies.find(rep => rep.handle.toLowerCase() === r.handle.toLowerCase())) {
+      const key = `${r.handle.toLowerCase()}|${r.tweetUrl}`;
+      if (!seenKeys.has(key)) {
+        seenKeys.add(key);
         replies.push(r);
       }
     });
@@ -1643,7 +1691,7 @@ async function collectPostReplies(tabId, maxReplies = 100) {
 
     if (replies.length <= lastCount) {
       stagnantRounds++;
-      if (stagnantRounds >= 2) break;
+      if (stagnantRounds >= 3) break;
     } else {
       stagnantRounds = 0;
     }
@@ -1653,7 +1701,7 @@ async function collectPostReplies(tabId, maxReplies = 100) {
       window.scrollBy({ top: Math.max(window.innerHeight * 0.8, 600), behavior: 'auto' });
       return true;
     }).catch(() => {});
-    await sleep(600);
+    await sleep(1000);
   }
 
   return replies.slice(0, maxReplies);

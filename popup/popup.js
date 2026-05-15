@@ -149,6 +149,31 @@ async function init() {
 
   startQueuePolling();
 
+  // ── Deep Scan recovery ────────────────────────────────────────────────────
+  // Deep Scan runs in the background service worker and is independent of
+  // whichever tab the user is currently viewing.  Check its state FIRST,
+  // before any isXTab guard, so switching to a non-X tab does not lose
+  // the progress view.
+  try {
+    const ds = await getDeepScanStatus();
+    if (ds.running || ds.completed || ds.error) {
+      // Update the inline analyze button state even if we are about to
+      // show the deep scan view (keeps the button consistent on return).
+      const inlineAnalyzeBtn = document.getElementById('btn-analyze-inline');
+      if (inlineAnalyzeBtn) {
+        inlineAnalyzeBtn.disabled = !isXTab;
+        inlineAnalyzeBtn.textContent = isXTab ? '开始分析当前页面' : '请先切到 X 页面';
+      }
+      showView('deepScanProgress');
+      renderDeepScanStatus(ds);
+      if (ds.running) {
+        startDeepScanPolling();
+      }
+      return;
+    }
+  } catch (_) {}
+  // ── End Deep Scan recovery ────────────────────────────────────────────────
+
   // Keep analysis entry visible by default unless explicitly set otherwise.
   showView(isXTab ? 'idle' : 'notX');
 

@@ -13,10 +13,13 @@ If your X / Twitter timeline, search results, or reply sections are filled with 
 ## Core Features / 核心功能
 
 - AI-powered analysis for visible posts on `x.com` and `twitter.com`.
+- **Deep Scan**: scan all replies across recent posts of any target blogger. Enter a handle, configure how many posts and replies to collect, and Block Bot automatically navigates through each post in a background tab, waits for replies to render, and runs AI analysis across the collected replies.
 - Detects likely spam accounts, bot accounts, scam accounts, engagement farming, and suspicious repeated behavior.
+- Detects coordinated copy-paste / auto-reply bots by comparing reply text similarity across users.
 - Review-before-block workflow: no account is blocked until the user confirms it.
 - Local blocking through the current browser session, without a Block Bot backend.
 - Rate-limited block queue with progress display, pause, and resume controls.
+- Deep Scan progress is preserved when the user switches tabs and reopens the extension popup, regardless of which tab is currently active.
 - Local settings and cache stored in Chrome extension storage.
 - Supports many AI providers and custom OpenAI-compatible endpoints.
 - Local prefilter before AI analysis for obvious bot replies, including emoji-only replies, emoji-plus-number replies, tiny token replies, random-looking handles, and configurable spam keywords.
@@ -28,10 +31,13 @@ If your X / Twitter timeline, search results, or reply sections are filled with 
 中文功能概览：
 
 - 扫描 `x.com` / `twitter.com` 当前页面已经显示的推文。
+- **深度扫描（Deep Scan）**：针对任意目标博主，自动采集其最近帖子的所有回复，在后台标签页逐帖打开并等待回复渲染，然后对采集到的回复运行 AI 分析。
 - 使用 AI 分析疑似垃圾账号、机器人账号、诈骗账号、刷互动账号、水军号和低质量营销号。
+- 通过回复文本相似度对比，识别协同作弊的复制粘贴/自动回复机器人群体。
 - 先展示候选账号，再由用户确认是否加入屏蔽队列。
 - 屏蔽动作在本地浏览器内执行，不经过 Block Bot 自有服务器。
 - 内置限速屏蔽队列，支持查看进度、暂停和继续。
+- 深度扫描进行中切换 tab、再重新打开扩展弹窗时，进度会自动恢复，无论当前所在 tab 是否为 X 页面。
 - 配置、缓存和任务状态保存在 Chrome 本地扩展存储中。
 - 支持多个模型服务，也支持自定义 OpenAI 兼容接口。
 
@@ -90,6 +96,26 @@ Block Bot only runs on `x.com` and `twitter.com`. When the user starts an analys
 Block Bot does not run a proprietary backend service in the current version. The analyzed content is not sent to Block Bot servers. If the user confirms block actions, the extension uses the current logged-in X session in the local browser to perform rate-limited blocking. If the current page cannot complete a specific block action, the extension may temporarily open a background X tab to finish that user-confirmed task.
 
 中文说明：扩展只在 `x.com` 与 `twitter.com` 页面运行。它会读取当前页面已经渲染出来的推文内容、账号 handle、显示名称、推文链接和资料页链接，然后把候选数据发送到用户在设置页中选择的模型服务进行分类分析。屏蔽动作不会通过 Block Bot 自己的服务器执行。
+
+### Deep Scan / 深度扫描
+
+Deep Scan targets a specific blogger rather than the current page. After the user enters a handle and configures limits (number of posts, replies per post, total reply cap), Block Bot:
+
+1. Opens the blogger's profile in a background tab and collects links to their own posts (retweets and replies-to-others are excluded).
+2. Navigates to each post URL in the background tab and waits for the reply section to render in the DOM before collecting replies. This extra wait handles X's React SPA behaviour, where the browser signals page load before reply nodes are actually mounted.
+3. Sends the collected replies through the same local prefilter and AI analysis pipeline used by the regular page scan.
+4. Cross-post reply deduplication preserves multiple tweets per user so the copy-paste bot detector can compare them and flag coordinated template replies.
+5. Confirmed candidates are added to the block queue automatically.
+
+Deep Scan 针对特定博主而非当前页面。用户输入博主 handle 并配置采集上限（帖子数、每帖回复数、总回复上限）后，Block Bot 会：
+
+1. 在后台标签页打开博主主页，只采集博主本人发布的帖子链接（排除转推和回复他人帖子的链接）。
+2. 逐一导航到每条帖子，并等待回复节点真正挂载到 DOM 后再开始采集（解决 X 作为 React SPA 时浏览器过早报告页面加载完成的问题）。
+3. 采集到的回复经过本地预过滤和 AI 分析流水线处理。
+4. 跨帖回复不再按 handle 全局去重，同一用户的多条推文均被保留，用于复制粘贴/协同机器人检测。
+5. 确认的候选账号自动加入屏蔽队列。
+
+扫描过程中，无论用户切换到哪个标签页，重新打开扩展弹窗都会自动恢复进度视图并继续轮询状态。
 
 ### Local Prefilter Before AI
 
