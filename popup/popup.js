@@ -371,8 +371,7 @@ function renderResults() {
             <span class="candidate-name">${escapeHtml(c.displayName || '')}</span>
             <span class="confidence confidence-${confidenceClass(c.confidence)}">${Math.round(c.confidence * 100)}%</span>
           </div>
-          <div class="candidate-reason">${escapeHtml(c.reason || '')}</div>
-          ${c.evidenceTweet ? `<div class="candidate-evidence">"${escapeHtml(c.evidenceTweet)}"</div>` : ''}
+          ${(c.evidenceTweet || '').trim() ? `<div class="candidate-evidence">“${escapeHtml(c.evidenceTweet.trim())}”</div>` : ''}
         </div>
       </label>`;
     list.appendChild(li);
