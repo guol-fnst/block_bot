@@ -65,9 +65,9 @@ Block Bot can call the model service selected by the user from the browser exten
 
 ## Install Manually / 手动安装
 
-推荐使用 `dist/block-bot-chrome-extension-v0.1.1.zip` 手动安装：
+推荐使用 `dist/block-bot-chrome-extension-v0.2.0.zip` 手动安装：
 
-1. 下载或找到仓库里的 `dist/block-bot-chrome-extension-v0.1.1.zip`。
+1. 下载或找到仓库里的 `dist/block-bot-chrome-extension-v0.2.0.zip`。
 2. 解压这个 zip 文件，得到一个扩展目录。
 3. 打开 Chrome，在地址栏输入 `chrome://extensions/`。
 4. 打开右上角的“开发者模式”。
@@ -77,7 +77,7 @@ Block Bot can call the model service selected by the user from the browser exten
 
 English:
 
-1. Download `dist/block-bot-chrome-extension-v0.1.1.zip`.
+1. Download `dist/block-bot-chrome-extension-v0.2.0.zip`.
 2. Unzip the archive into a folder.
 3. Open Chrome and go to `chrome://extensions/`.
 4. Enable Developer mode.
@@ -161,8 +161,8 @@ Block Bot is designed to keep the user in control:
 
 仓库中的 `dist/` 目录提供已打包的扩展文件：
 
-- `block-bot-chrome-extension-v0.1.1.zip`: 推荐给普通用户手动安装。先解压，再通过 Chrome 扩展程序页面加载解压后的目录。
-- `block-bot-chrome-extension-v0.1.1.crx`: 已打包的 Chrome 扩展安装文件，适合本地测试分发。
+- `block-bot-chrome-extension-v0.2.0.zip`: 推荐给普通用户手动安装。先解压，再通过 Chrome 扩展程序页面加载解压后的目录。
+- `block-bot-chrome-extension-v0.2.0.crx`: 已打包的 Chrome 扩展安装文件，适合本地测试分发。
 
 说明：
 
