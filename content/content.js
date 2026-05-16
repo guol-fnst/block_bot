@@ -34,6 +34,9 @@
   }
 
   function parseTweetFromArticle(article, threadAuthorHandle) {
+    // 改善1: 过滤广告推文（Promoted Tweets），避免误判广告主账号
+    if (article.querySelector('[data-testid="placementTracking"]')) return null;
+
     const userNameBlock = article.querySelector('[data-testid="User-Name"]');
     if (!userNameBlock) return null;
 
@@ -55,8 +58,9 @@
     let displayName = '';
     const spans = userNameBlock.querySelectorAll('span');
     for (const s of spans) {
-      const t = s.textContent.trim();
-      if (t && !t.startsWith('@') && s.children.length === 0) {
+      // #4 fix: 使用 innerText 正确提取含 emoji 图片子节点的显示名
+      const t = (s.innerText || s.textContent).trim();
+      if (t && !t.startsWith('@')) {
         displayName = t;
         break;
       }
@@ -125,7 +129,7 @@
 
       const currentSize = merged.size;
       const currentHeight = document.body.scrollHeight;
-      if (currentSize <= lastSize && currentHeight <= lastHeight + 2) {
+      if (currentSize <= lastSize && currentHeight <= lastHeight + 10) {
         stagnantRounds += 1;
       } else {
         stagnantRounds = 0;
@@ -133,12 +137,29 @@
       lastSize = currentSize;
       lastHeight = currentHeight;
 
-      if (stagnantRounds >= 3) break;
+      // 需要连续 4 轮无变化才停止，避免网络延迟导致误判停滞
+      if (stagnantRounds >= 4) {
+        // 额外等待一次再确认，防止网络慢时漏采
+        await sleep(1600);
+        const afterWait = collectVisibleTweets(threadAuthorHandle);
+        mergeTweetsIntoMap(merged, afterWait);
+        if (merged.size <= lastSize && document.body.scrollHeight <= lastHeight + 10) {
+          break;
+        }
+        // 有新推文，重置停滞计数继续滚动
+        stagnantRounds = 0;
+        lastSize = merged.size;
+        lastHeight = document.body.scrollHeight;
+      }
 
-      window.scrollBy({ top: Math.max(window.innerHeight * 0.9, 650), behavior: 'auto' });
-      await sleep(900);
+      window.scrollBy({ top: Math.max(window.innerHeight * 0.9, 800), behavior: 'auto' });
+      // 等待 X.com 懒加载渲染完成（网络慢时需要更长时间）
+      await sleep(1400);
     }
 
+    // 最终再滚动一次并等待，确保末尾推文不遗漏
+    window.scrollBy({ top: Math.max(window.innerHeight * 1.2, 1000), behavior: 'auto' });
+    await sleep(1600);
     mergeTweetsIntoMap(merged, collectVisibleTweets(threadAuthorHandle));
     return Array.from(merged.values()).map(({ uniqueId, ...tweet }) => tweet);
   }
