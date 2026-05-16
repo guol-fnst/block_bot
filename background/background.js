@@ -489,7 +489,8 @@ async function blockViaHiddenTab(handle) {
           document.querySelector('[role="menuitem"][aria-label*="Block"]') ||
           document.querySelector('[role="menuitem"][aria-label*="屏蔽"]') ||
           // #12 fix: text-based fallback for other UI languages
-          Array.from(document.querySelectorAll('[role="menuitem"]')).find(el => /block/i.test(el.textContent || ''));
+          // Use word-boundary so "Unblock" / "Entblockieren" etc. are NOT matched.
+          Array.from(document.querySelectorAll('[role="menuitem"]')).find(el => /\bblock\b/i.test(el.textContent || ''));
 
         if (!blockItem) {
           const maybeUnblock = document.querySelector('[data-testid="unblock"]');
