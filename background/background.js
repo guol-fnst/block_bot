@@ -395,7 +395,11 @@ function waitForTabLoaded(tabId, timeoutMs = 12000) {
 async function ensureWorkerTab() {
   if (blockQueue.workerTabId) {
     try {
-      await tabsUpdate(blockQueue.workerTabId, { active: false });
+      // #11 fix: confirm tab is fully loaded before reuse to avoid navigation race
+      const existingTab = await chrome.tabs.get(blockQueue.workerTabId);
+      if (existingTab.status !== 'complete') {
+        await waitForTabLoaded(blockQueue.workerTabId, 10000).catch(() => {});
+      }
       return blockQueue.workerTabId;
     } catch (_) {
       blockQueue.workerTabId = null;
@@ -467,7 +471,11 @@ async function blockViaHiddenTab(handle) {
         const moreBtn =
           (await waitFor('button[data-testid="userActions"]', 8000)) ||
           document.querySelector('button[aria-label*="More"]') ||
-          document.querySelector('button[aria-label*="更多"]');
+          document.querySelector('button[aria-label*="更多"]') ||
+          // #12 fix: multilingual fallback via aria-haspopup
+          document.querySelector('[data-testid="User-Name"]')
+            ?.closest('[data-testid="UserCell"], article, [data-testid="primaryColumn"]')
+            ?.querySelector('button[aria-haspopup="menu"]');
 
         if (!moreBtn) {
           return { ok: false, error: `后台页未找到用户操作按钮 @${slug}` };
@@ -479,7 +487,9 @@ async function blockViaHiddenTab(handle) {
         const blockItem =
           (await waitFor('[data-testid="block"]', 4500)) ||
           document.querySelector('[role="menuitem"][aria-label*="Block"]') ||
-          document.querySelector('[role="menuitem"][aria-label*="屏蔽"]');
+          document.querySelector('[role="menuitem"][aria-label*="屏蔽"]') ||
+          // #12 fix: text-based fallback for other UI languages
+          Array.from(document.querySelectorAll('[role="menuitem"]')).find(el => /block/i.test(el.textContent || ''));
 
         if (!blockItem) {
           const maybeUnblock = document.querySelector('[data-testid="unblock"]');
@@ -680,15 +690,27 @@ function defaultDetectionRules() {
 }
 
 function buildPrompt(batch, customDetectionPrompt = '') {
+  // #7 fix: group tweets by handle so the LLM sees all messages per user
+  // and can detect copy-paste / template-bot patterns more reliably.
+  const grouped = new Map();
+  (batch || []).forEach(t => {
+    const key = String(t.handle || '').toLowerCase();
+    if (!grouped.has(key)) {
+      grouped.set(key, { handle: t.handle, displayName: t.displayName, texts: [] });
+    }
+    const entry = grouped.get(key);
+    if (t.text) entry.texts.push(t.text);
+  });
+
   const tweetsJson = JSON.stringify(
-    batch.map(t => ({
+    Array.from(grouped.values()).map(t => ({
       handle: t.handle,
       displayName: t.displayName,
-      text: t.text,
-      hasUrl: /https?:\/\//.test(t.text),
-      isReply: t.text.startsWith('@'),
-      textLength: t.text.length,
-      charDiversity: new Set(t.text).size // Rough indicator of vocab diversity
+      texts: t.texts,
+      textCount: t.texts.length,
+      hasUrl: t.texts.some(text => /https?:\/\//.test(text)),
+      isReply: t.texts.some(text => text.startsWith('@')),
+      charDiversity: new Set(t.texts.join('')).size
     })),
     null,
     2
@@ -697,9 +719,9 @@ function buildPrompt(batch, customDetectionPrompt = '') {
   const rules = String(customDetectionPrompt || '').trim() || defaultDetectionRules();
 
   return (
-    '你是一个 Twitter/X 垃圾账号检测助手。请分析以下推文列表，判断每个账号是否疑似' +
+    '你是一个 Twitter/X 垃圾账号检测助手。请分析以下账号列表（每个账号可能含多条推文），判断是否疑似' +
     '垃圾账号、广告号或机器人号。\n\n' +
-    '推文数据：\n' + tweetsJson + '\n\n' +
+    '账号数据：\n' + tweetsJson + '\n\n' +
     '请对每个 handle 返回一个 JSON 数组，格式如下（只返回 JSON，不要加其他文字）：\n' +
     '[\n' +
     '  {\n' +
@@ -1683,17 +1705,18 @@ async function collectUserPostLinks(tabId, maxLinks = 20, targetHandle = '') {
 
     if (links.length <= lastCount) {
       stagnantRounds++;
-      if (stagnantRounds >= 3) break;
+      // #2 fix: raise to 4 rounds, consistent with collectPostReplies
+      if (stagnantRounds >= 4) break;
     } else {
       stagnantRounds = 0;
     }
 
     lastCount = links.length;
     await executeInTab(tabId, () => {
-      window.scrollBy({ top: Math.max(window.innerHeight * 0.8, 600), behavior: 'auto' });
+      window.scrollBy({ top: Math.max(window.innerHeight * 0.9, 800), behavior: 'auto' });
       return true;
     }).catch(() => {});
-    await sleep(1200);
+    await sleep(1400);
   }
 
   return links.slice(0, maxLinks);
@@ -1704,7 +1727,7 @@ async function collectUserPostLinks(tabId, maxLinks = 20, targetHandle = '') {
  * in the tab's DOM, or until `timeoutMs` elapses.
  * Returns true if the target count was reached, false on timeout.
  */
-async function waitForRepliesRendered(tabId, minCount = 2, timeoutMs = 10000) {
+async function waitForRepliesRendered(tabId, minCount = 2, timeoutMs = 15000) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     const count = await executeInTab(tabId, () =>
@@ -1787,15 +1810,16 @@ async function collectPostReplies(tabId, maxReplies = 100) {
           const textEl = article.querySelector('[data-testid="tweetText"]');
           const text = textEl ? textEl.innerText.trim() : '';
 
-          if (text) {
-            tweets.push({
-              handle,
-              displayName,
-              text,
-              tweetUrl,
-              profileUrl: `https://x.com/${handle.replace('@', '')}`
-            });
-          }
+          // #5 fix: keep media-only tweets (no text) with a placeholder
+          // so image-spam bots are not silently skipped.
+          const effectiveText = text || '[媒体内容/无文字推文]';
+          tweets.push({
+            handle,
+            displayName,
+            text: effectiveText,
+            tweetUrl,
+            profileUrl: `https://x.com/${handle.replace('@', '')}`
+          });
         } catch (_) {}
       });
 
