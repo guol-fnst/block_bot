@@ -619,6 +619,9 @@ async function runGlobalBlockQueue() {
           time: Date.now()
         });
 
+        // Issue #10: close dirty tab on failure so next attempt gets fresh tab.
+        await cleanupWorkerTab();
+
         // Circuit breaker: auto-pause after N consecutive failures so a dead
         // X session doesn’t silently spin through the entire queue.
         if (blockQueue.consecutiveFails >= CIRCUIT_BREAKER_THRESHOLD) {
@@ -640,7 +643,9 @@ async function runGlobalBlockQueue() {
   } finally {
     blockQueue.running = false;
     blockQueue.current = null;
-    await cleanupWorkerTab();
+    if (!blockQueue.paused) {
+      await cleanupWorkerTab();
+    }
   }
 }
 
@@ -1085,7 +1090,7 @@ function looksLikeRandomHandle(handle) {
   return (
     /^[A-Z][a-z]+[A-Z][a-z]+\d{3,}$/.test(slug) ||
     /^[A-Za-z]{5,}\d{4,}$/.test(slug) ||
-    /^[a-z0-9_]{10,}$/.test(slug) && /\d{4,}/.test(slug) && /[a-z]/i.test(slug)
+    /^[a-z0-9]{10,}$/.test(slug) && /\d{4,}/.test(slug) && /[a-z]/.test(slug)
   );
 }
 
@@ -1206,13 +1211,22 @@ function calcTextSimilarity(text1, text2) {
 // Detect copy-paste/auto-reply patterns: accounts with near-identical messages
 function detectAutoReplyBots(batch, results) {
   if (!batch || !results || batch.length < 2) return;
-  
+
+  // Build a handle→result map so we are not relying on array order.
+  // The LLM response does not guarantee the same order as the input batch.
+  const resultByHandle = new Map();
+  results.forEach(r => {
+    if (r?.handle) {
+      resultByHandle.set(String(r.handle).toLowerCase(), r);
+    }
+  });
+
   // Group results by tweet similarity
   const tweetsWithResults = batch
-    .map((tweet, i) => ({
+    .map(tweet => ({
       tweet: tweet.text || '',
       handle: tweet.handle,
-      result: results[i]
+      result: resultByHandle.get(String(tweet.handle || '').toLowerCase())
     }))
     .filter(x => x.result);
   
@@ -1763,8 +1777,8 @@ async function collectPostReplies(tabId, maxReplies = 100) {
           let displayName = '';
           const spans = userNameBlock.querySelectorAll('span');
           for (const s of spans) {
-            const t = s.textContent.trim();
-            if (t && !t.startsWith('@') && s.children.length === 0) {
+            const t = (s.innerText || s.textContent).trim();
+            if (t && !t.startsWith('@')) {
               displayName = t;
               break;
             }
@@ -1802,7 +1816,7 @@ async function collectPostReplies(tabId, maxReplies = 100) {
 
     if (replies.length <= lastCount) {
       stagnantRounds++;
-      if (stagnantRounds >= 3) break;
+      if (stagnantRounds >= 4) break;
     } else {
       stagnantRounds = 0;
     }
@@ -1812,7 +1826,7 @@ async function collectPostReplies(tabId, maxReplies = 100) {
       window.scrollBy({ top: Math.max(window.innerHeight * 0.8, 600), behavior: 'auto' });
       return true;
     }).catch(() => {});
-    await sleep(1000);
+    await sleep(1400);
   }
 
   return replies.slice(0, maxReplies);
@@ -1897,8 +1911,6 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
 
   if (msg.action === 'pauseGlobalBlocking') {
     blockQueue.paused   = true;
-    blockQueue.running  = false;
-    blockQueue.current  = null;
     saveBlockQueueState();
     sendResponse({ ok: true, status: getBlockStatusSnapshot() });
     return false;

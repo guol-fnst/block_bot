@@ -101,7 +101,7 @@ function renderQueueStatus(s) {
   const pending = (s.queue || []).filter(i => i.status === 'pending').length;
   const failed = Number(s.failed || 0);
   const done = Number(s.done || 0);
-  const runningText = s.running ? '运行中' : (s.paused ? '已暂停' : '空闲');
+  const runningText = s.paused ? '已暂停' : (s.running ? '运行中' : '空闲');
   msgEl.textContent = `屏蔽任务：${runningText}（待处理 ${pending}）`;
   const baseDetail = s.current
     ? `当前：${s.current} ｜ 成功 ${s.done} ｜ 失败 ${s.failed}`
@@ -121,8 +121,8 @@ function renderQueueStatus(s) {
     logEl.appendChild(li);
   });
 
-  pauseBtn.disabled = !s.running;
-  resumeBtn.disabled = s.running || pending === 0;
+  pauseBtn.disabled = !s.running || s.paused;
+  resumeBtn.disabled = !s.paused || pending === 0;
   retryFailedBtn.disabled = s.running || failed === 0;
   clearDoneBtn.disabled = s.running || done === 0;
 }
