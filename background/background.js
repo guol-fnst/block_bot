@@ -4,13 +4,22 @@
  */
 'use strict';
 
-const BATCH_SIZE = 15;
+const DEFAULT_ANALYSIS_BATCH_SIZE = 15;
+const DEFAULT_ANALYSIS_PARALLELISM = 0; // 0 = provider-based auto
+const DEFAULT_SCRAPE_SCROLL_WAIT_MS = 1200;
+const DEFAULT_SCRAPE_MAX_ROUNDS = 120;
+const DEFAULT_SCRAPE_MAX_TWEETS = 1000;
+const DEFAULT_SCRAPE_STAGNANT_ROUNDS = 4;
 const CONFIDENCE_THRESHOLD = 0.8;
 const ANALYSIS_KEY_PREFIX = 'analysisCache:';
 const API_RETRY_MAX_ATTEMPTS = 4;
 const API_RETRY_BASE_DELAY_MS = 800;
 const API_RETRY_MAX_DELAY_MS = 8000;
 const API_FETCH_TIMEOUT_MS = 30000;
+
+const PERSIST_BLOCK_QUEUE_KEY = 'blockQueueState';
+const PERSIST_DEEP_SCAN_KEY  = 'deepScanPersist';
+const CIRCUIT_BREAKER_THRESHOLD = 5;
 
 const GEMINI_MODELS = [
   'gemini-3.1-flash-lite',
@@ -246,6 +255,101 @@ function storageRemove(keys) {
   return new Promise(resolve => chrome.storage.local.remove(keys, resolve));
 }
 
+// ─── 状态持久化（防止 Service Worker 重启丢数据）─────────────────────────────
+
+/**
+ * 将屏蔽队列关键字段写入 storage。
+ * 在 recalcTotals / pause / resume 等关键节点触发（fire-and-forget）。
+ */
+function saveBlockQueueState() {
+  // Trim log to last 50 entries before persisting.
+  if (blockQueue.log.length > 50) {
+    blockQueue.log.splice(0, blockQueue.log.length - 50);
+  }
+  storageSet({
+    [PERSIST_BLOCK_QUEUE_KEY]: {
+      queue:    blockQueue.queue.map(i => ({ ...i })),
+      log:      blockQueue.log.slice(),
+      paused:   blockQueue.paused,
+      errorMsg: blockQueue.errorMsg
+    }
+  }).catch(e => console.warn('[Persist] saveBlockQueueState failed:', e));
+}
+
+/**
+ * 将 Deep Scan 关键字段写入 storage。
+ * 在扫描完成、出错、步骤里程碑时触发（fire-and-forget）。
+ */
+function saveDeepScanState() {
+  storageSet({
+    [PERSIST_DEEP_SCAN_KEY]: {
+      running:         deepScanState.running,
+      handle:          deepScanState.handle,
+      config:          deepScanState.config,
+      postsCount:      deepScanState.postsCount,
+      repliesCount:    deepScanState.repliesCount,
+      candidatesCount: deepScanState.candidatesCount,
+      completed:       deepScanState.completed,
+      currentStep:     deepScanState.currentStep,
+      error:           deepScanState.error,
+      // Only persist candidates when the scan has finished; avoid bloat mid-run.
+      candidates:      deepScanState.completed ? deepScanState.candidates : []
+    }
+  }).catch(e => console.warn('[Persist] saveDeepScanState failed:', e));
+}
+
+/**
+ * Service Worker 启动时从 storage 恢复上次状态。
+ * blockQueue 中处于 'running' 的条目（上次被中断）回退为 'pending'。
+ * deepScanState 如果上次正在运行则标记为中断错误；若已完成则保留结果。
+ */
+async function restorePersistedState() {
+  const data = await storageGet([PERSIST_BLOCK_QUEUE_KEY, PERSIST_DEEP_SCAN_KEY]);
+
+  const bq = data[PERSIST_BLOCK_QUEUE_KEY];
+  if (bq) {
+    blockQueue.queue = (bq.queue || []).map(i => ({
+      ...i,
+      // Items that were mid-block when the SW died must be retried.
+      status: i.status === 'running' ? 'pending' : i.status
+    }));
+    blockQueue.log     = bq.log     || [];
+    blockQueue.paused  = bq.paused  || false;
+    blockQueue.errorMsg= bq.errorMsg|| '';
+    recalcTotals();
+    console.log(`[Persist] Restored blockQueue: ${blockQueue.queue.length} items`);
+  }
+
+  const ds = data[PERSIST_DEEP_SCAN_KEY];
+  if (ds) {
+    deepScanState.handle          = ds.handle          || '';
+    deepScanState.config          = ds.config          || {};
+    deepScanState.postsCount      = ds.postsCount      || 0;
+    deepScanState.repliesCount    = ds.repliesCount    || 0;
+    deepScanState.candidatesCount = ds.candidatesCount || 0;
+    deepScanState.completed       = ds.completed       || false;
+    deepScanState.candidates      = ds.candidates      || [];
+
+    if (ds.running && !ds.completed) {
+      // SW was killed while scan was in progress – cannot resume, show error.
+      deepScanState.running     = false;
+      deepScanState.error       = 'Service Worker 已重启，扫描中断。请重新发起深度扫描。';
+      deepScanState.currentStep = '扫描已中断（后台进程重启）';
+    } else {
+      deepScanState.error       = ds.error       || '';
+      deepScanState.currentStep = ds.currentStep || '';
+    }
+    console.log(`[Persist] Restored deepScanState: handle=${deepScanState.handle} completed=${deepScanState.completed} error=${deepScanState.error}`);
+  }
+}
+
+// Restore persisted state as soon as the service worker starts.
+// By the time the first message arrives (requires a popup round-trip),
+// this IIFE will have already completed.
+(async () => {
+  try { await restorePersistedState(); } catch (e) { console.error('[Persist] Restore failed:', e); }
+})();
+
 function tabsCreate(url, active = false) {
   return new Promise((resolve, reject) => {
     chrome.tabs.create({ url, active }, tab => {
@@ -296,7 +400,11 @@ function waitForTabLoaded(tabId, timeoutMs = 12000) {
 async function ensureWorkerTab() {
   if (blockQueue.workerTabId) {
     try {
-      await tabsUpdate(blockQueue.workerTabId, { active: false });
+      // #11 fix: confirm tab is fully loaded before reuse to avoid navigation race
+      const existingTab = await chrome.tabs.get(blockQueue.workerTabId);
+      if (existingTab.status !== 'complete') {
+        await waitForTabLoaded(blockQueue.workerTabId, 10000).catch(() => {});
+      }
       return blockQueue.workerTabId;
     } catch (_) {
       blockQueue.workerTabId = null;
@@ -368,7 +476,11 @@ async function blockViaHiddenTab(handle) {
         const moreBtn =
           (await waitFor('button[data-testid="userActions"]', 8000)) ||
           document.querySelector('button[aria-label*="More"]') ||
-          document.querySelector('button[aria-label*="更多"]');
+          document.querySelector('button[aria-label*="更多"]') ||
+          // #12 fix: multilingual fallback via aria-haspopup
+          document.querySelector('[data-testid="User-Name"]')
+            ?.closest('[data-testid="UserCell"], article, [data-testid="primaryColumn"]')
+            ?.querySelector('button[aria-haspopup="menu"]');
 
         if (!moreBtn) {
           return { ok: false, error: `后台页未找到用户操作按钮 @${slug}` };
@@ -380,7 +492,10 @@ async function blockViaHiddenTab(handle) {
         const blockItem =
           (await waitFor('[data-testid="block"]', 4500)) ||
           document.querySelector('[role="menuitem"][aria-label*="Block"]') ||
-          document.querySelector('[role="menuitem"][aria-label*="屏蔽"]');
+          document.querySelector('[role="menuitem"][aria-label*="屏蔽"]') ||
+          // #12 fix: text-based fallback for other UI languages
+          // Use word-boundary so "Unblock" / "Entblockieren" etc. are NOT matched.
+          Array.from(document.querySelectorAll('[role="menuitem"]')).find(el => /\bblock\b/i.test(el.textContent || ''));
 
         if (!blockItem) {
           const maybeUnblock = document.querySelector('[data-testid="unblock"]');
@@ -426,9 +541,11 @@ function getBlockStatusSnapshot() {
 }
 
 function recalcTotals() {
-  blockQueue.total = blockQueue.queue.length;
-  blockQueue.done = blockQueue.queue.filter(i => i.status === 'done').length;
+  blockQueue.total  = blockQueue.queue.length;
+  blockQueue.done   = blockQueue.queue.filter(i => i.status === 'done').length;
   blockQueue.failed = blockQueue.queue.filter(i => i.status === 'failed').length;
+  // Persist after every status change so SW restarts lose at most one item.
+  saveBlockQueueState();
 }
 
 function retryFailedBlockItems() {
@@ -518,6 +635,17 @@ async function runGlobalBlockQueue() {
           time: Date.now()
         });
 
+        // Issue #10: close dirty tab on failure so next attempt gets fresh tab.
+        await cleanupWorkerTab();
+
+        // Circuit breaker: auto-pause after N consecutive failures so a dead
+        // X session doesn’t silently spin through the entire queue.
+        if (blockQueue.consecutiveFails >= CIRCUIT_BREAKER_THRESHOLD) {
+          blockQueue.paused   = true;
+          blockQueue.errorMsg = `连续失败 ${blockQueue.consecutiveFails} 次，已自动暂停。请检查 X 登录状态后点击「继续」重试。`;
+          recalcTotals();
+          break;
+        }
       }
 
       recalcTotals();
@@ -531,7 +659,9 @@ async function runGlobalBlockQueue() {
   } finally {
     blockQueue.running = false;
     blockQueue.current = null;
-    await cleanupWorkerTab();
+    if (!blockQueue.paused) {
+      await cleanupWorkerTab();
+    }
   }
 }
 
@@ -566,15 +696,27 @@ function defaultDetectionRules() {
 }
 
 function buildPrompt(batch, customDetectionPrompt = '') {
+  // #7 fix: group tweets by handle so the LLM sees all messages per user
+  // and can detect copy-paste / template-bot patterns more reliably.
+  const grouped = new Map();
+  (batch || []).forEach(t => {
+    const key = String(t.handle || '').toLowerCase();
+    if (!grouped.has(key)) {
+      grouped.set(key, { handle: t.handle, displayName: t.displayName, texts: [] });
+    }
+    const entry = grouped.get(key);
+    if (t.text) entry.texts.push(t.text);
+  });
+
   const tweetsJson = JSON.stringify(
-    batch.map(t => ({
+    Array.from(grouped.values()).map(t => ({
       handle: t.handle,
       displayName: t.displayName,
-      text: t.text,
-      hasUrl: /https?:\/\//.test(t.text),
-      isReply: t.text.startsWith('@'),
-      textLength: t.text.length,
-      charDiversity: new Set(t.text).size // Rough indicator of vocab diversity
+      texts: t.texts,
+      textCount: t.texts.length,
+      hasUrl: t.texts.some(text => /https?:\/\//.test(text)),
+      isReply: t.texts.some(text => text.startsWith('@')),
+      charDiversity: new Set(t.texts.join('')).size
     })),
     null,
     2
@@ -583,9 +725,9 @@ function buildPrompt(batch, customDetectionPrompt = '') {
   const rules = String(customDetectionPrompt || '').trim() || defaultDetectionRules();
 
   return (
-    '你是一个 Twitter/X 垃圾账号检测助手。请分析以下推文列表，判断每个账号是否疑似' +
+    '你是一个 Twitter/X 垃圾账号检测助手。请分析以下账号列表（每个账号可能含多条推文），判断是否疑似' +
     '垃圾账号、广告号或机器人号。\n\n' +
-    '推文数据：\n' + tweetsJson + '\n\n' +
+    '账号数据：\n' + tweetsJson + '\n\n' +
     '请对每个 handle 返回一个 JSON 数组，格式如下（只返回 JSON，不要加其他文字）：\n' +
     '[\n' +
     '  {\n' +
@@ -634,6 +776,60 @@ function normalizeThreshold(raw) {
   return v;
 }
 
+function normalizeInt(raw, min, max, fallback) {
+  const v = Number(raw);
+  if (!Number.isFinite(v)) return fallback;
+  const n = Math.round(v);
+  if (n < min) return min;
+  if (n > max) return max;
+  return n;
+}
+
+function normalizeAnalysisBatchSize(raw) {
+  return normalizeInt(raw, 5, 40, DEFAULT_ANALYSIS_BATCH_SIZE);
+}
+
+function normalizeAnalysisParallelism(raw) {
+  const v = Number(raw);
+  if (!Number.isFinite(v)) return DEFAULT_ANALYSIS_PARALLELISM;
+  if (v <= 0) return 0;
+  return normalizeInt(v, 1, 6, 0);
+}
+
+function normalizeScrapeScrollWaitMs(raw) {
+  return normalizeInt(raw, 600, 2500, DEFAULT_SCRAPE_SCROLL_WAIT_MS);
+}
+
+function normalizeScrapeMaxRounds(raw) {
+  return normalizeInt(raw, 6, 300, DEFAULT_SCRAPE_MAX_ROUNDS);
+}
+
+function normalizeScrapeMaxTweets(raw) {
+  return normalizeInt(raw, 20, 5000, DEFAULT_SCRAPE_MAX_TWEETS);
+}
+
+function normalizeScrapeStagnantRounds(raw) {
+  return normalizeInt(raw, 2, 8, DEFAULT_SCRAPE_STAGNANT_ROUNDS);
+}
+
+function normalizeOpenAICompatibleApiUrl(rawUrl) {
+  const trimmed = String(rawUrl || '').trim();
+  if (!trimmed) return '';
+
+  try {
+    const url = new URL(trimmed);
+    const path = url.pathname.replace(/\/+$/, '');
+    if (path === '' || path === '/v1') {
+      url.pathname = `${path || '/v1'}/chat/completions`;
+      return url.toString();
+    }
+  } catch (_) {
+    return trimmed;
+  }
+
+  return trimmed;
+}
+
 async function getProviderConfig() {
   const d = await storageGet([
     'llmProvider',
@@ -645,7 +841,13 @@ async function getProviderConfig() {
     'openaiApiType',
     'spamConfidenceThreshold',
     'obviousBotKeywords',
-    'customDetectionPrompt'
+    'customDetectionPrompt',
+    'analysisBatchSize',
+    'analysisParallelism',
+    'scrapeScrollWaitMs',
+    'scrapeMaxRounds',
+    'scrapeMaxTweets',
+    'scrapeStagnantRounds'
   ]);
 
   const provider = d.llmProvider || 'gemini';
@@ -654,12 +856,18 @@ async function getProviderConfig() {
     geminiApiKey: d.geminiApiKey || '',
     geminiModel: d.geminiModel || 'auto',
     openaiApiKey: d.openaiApiKey || '',
-    openaiApiUrl: d.openaiApiUrl || '',
+    openaiApiUrl: normalizeOpenAICompatibleApiUrl(d.openaiApiUrl),
     openaiModel: d.openaiModel || '',
     openaiApiType: d.openaiApiType || (provider === 'anthropic' ? 'anthropic' : 'openai_compat'),
     spamConfidenceThreshold: normalizeThreshold(d.spamConfidenceThreshold),
     obviousBotKeywords: normalizeKeywordList(d.obviousBotKeywords),
-    customDetectionPrompt: d.customDetectionPrompt || ''
+    customDetectionPrompt: d.customDetectionPrompt || '',
+    analysisBatchSize: normalizeAnalysisBatchSize(d.analysisBatchSize),
+    analysisParallelism: normalizeAnalysisParallelism(d.analysisParallelism),
+    scrapeScrollWaitMs: normalizeScrapeScrollWaitMs(d.scrapeScrollWaitMs),
+    scrapeMaxRounds: normalizeScrapeMaxRounds(d.scrapeMaxRounds),
+    scrapeMaxTweets: normalizeScrapeMaxTweets(d.scrapeMaxTweets),
+    scrapeStagnantRounds: normalizeScrapeStagnantRounds(d.scrapeStagnantRounds)
   };
 }
 
@@ -858,10 +1066,27 @@ function shouldFallbackToChunk(error) {
   return msg.includes('context') || msg.includes('token') || msg.includes('too large') || msg.includes('413');
 }
 
+function getParallelBatchConcurrency(cfg) {
+  const configured = Number(cfg?.analysisParallelism || 0);
+  if (configured > 0) {
+    return Math.min(6, Math.max(1, Math.round(configured)));
+  }
+
+  const provider = String(cfg?.provider || '').toLowerCase();
+  const apiType = String(cfg?.openaiApiType || '').toLowerCase();
+
+  // Keep concurrency conservative to reduce provider rate-limit spikes.
+  if (provider === 'gemini') return 2;
+  if (provider === 'anthropic' || apiType === 'anthropic') return 2;
+  return 3;
+}
+
 async function analyzeTweetsOptimized(tweets, cfg, onProgress) {
   if (!tweets || tweets.length === 0) return [];
 
-  if (tweets.length <= BATCH_SIZE) {
+  const batchSize = normalizeAnalysisBatchSize(cfg?.analysisBatchSize);
+
+  if (tweets.length <= batchSize) {
     const all = await analyzeBatch(tweets, cfg);
     if (onProgress) {
       await onProgress(tweets.length, tweets.length);
@@ -871,22 +1096,41 @@ async function analyzeTweetsOptimized(tweets, cfg, onProgress) {
 
   // For larger pages, skip the one-shot request so we do not pay for a slow
   // oversized call before falling back to chunking anyway.
-  const results = [];
-  for (let i = 0; i < tweets.length; i += BATCH_SIZE) {
-    const batch = tweets.slice(i, i + BATCH_SIZE);
-    const batchResults = await analyzeBatch(batch, cfg);
-    results.push(...batchResults);
-
-    if (onProgress) {
-      const done = Math.min(i + BATCH_SIZE, tweets.length);
-      await onProgress(done, tweets.length);
-    }
-
-    if (i + BATCH_SIZE < tweets.length) {
-      await sleep(700);
-    }
+  const batches = [];
+  for (let i = 0; i < tweets.length; i += batchSize) {
+    batches.push(tweets.slice(i, i + batchSize));
   }
-  return results;
+
+  const total = tweets.length;
+  const parallel = Math.max(1, Math.min(getParallelBatchConcurrency(cfg), batches.length));
+  const resultsByBatch = new Array(batches.length);
+  let nextBatchIndex = 0;
+  let doneCount = 0;
+
+  const worker = async workerId => {
+    // Small stagger so all workers do not hit the provider at the exact same moment.
+    if (workerId > 0) {
+      await sleep(workerId * 120);
+    }
+
+    while (true) {
+      const batchIndex = nextBatchIndex;
+      nextBatchIndex += 1;
+      if (batchIndex >= batches.length) return;
+
+      const batch = batches[batchIndex];
+      const batchResults = await analyzeBatch(batch, cfg);
+      resultsByBatch[batchIndex] = batchResults;
+      doneCount += batch.length;
+
+      if (onProgress) {
+        await onProgress(Math.min(doneCount, total), total);
+      }
+    }
+  };
+
+  await Promise.all(Array.from({ length: parallel }, (_, i) => worker(i)));
+  return resultsByBatch.flat();
 }
 
 function compactText(text) {
@@ -925,8 +1169,33 @@ const BUILT_IN_OBVIOUS_BOT_KEYWORDS = [
   'hookup',
   'porn',
   'nude',
-  'casino'
+  'casino',
+  '夸克网盘',
+  '夸克盘',
+  'pan.quark.cn',
+  'quark网盘'
 ];
+
+function hasCloudDrivePromoSignal(text, customKeywords = []) {
+  const value = String(text || '').toLowerCase();
+  if (!value) return false;
+
+  const compact = value.replace(/\s+/g, '');
+  if (
+    compact.includes('pan.quark.cn') ||
+    compact.includes('quark.cn/s/') ||
+    compact.includes('夸克网盘') ||
+    compact.includes('夸克盘') ||
+    compact.includes('quark网盘')
+  ) {
+    return true;
+  }
+
+  return normalizeKeywordList(customKeywords).some(keyword => {
+    const k = String(keyword || '').toLowerCase().trim();
+    return k && value.includes(k);
+  });
+}
 
 function normalizeKeywordList(keywords) {
   const raw = Array.isArray(keywords)
@@ -958,7 +1227,7 @@ function looksLikeRandomHandle(handle) {
   return (
     /^[A-Z][a-z]+[A-Z][a-z]+\d{3,}$/.test(slug) ||
     /^[A-Za-z]{5,}\d{4,}$/.test(slug) ||
-    /^[a-z0-9_]{10,}$/.test(slug) && /\d{4,}/.test(slug) && /[a-z]/i.test(slug)
+    /^[a-z0-9]{10,}$/.test(slug) && /\d{4,}/.test(slug) && /[a-z]/.test(slug)
   );
 }
 
@@ -1001,16 +1270,31 @@ function detectObviousBotReply(tweet, customKeywords = []) {
   const reasons = [];
 
   const adultName = hasObviousBotKeyword(displayName, customKeywords) || hasObviousBotKeyword(handle, customKeywords);
+  const cloudDrivePromo = hasCloudDrivePromoSignal(text, customKeywords);
   const randomHandle = looksLikeRandomHandle(handle);
   const tinyToken = isTinyTokenReply(text);
   const emojiOnly = isEmojiOnlyOrEmojiNumberReply(text);
   const lowInfoMixed = isLowInfoMixedEmojiReply(text);
 
   if (adultName) reasons.push('display name or handle contains adult/spam lure keywords');
+  if (cloudDrivePromo) reasons.push('reply text contains cloud-drive promo link keywords');
   if (randomHandle) reasons.push('handle looks randomly generated');
   if (tinyToken) reasons.push('reply text is only a tiny token/number');
   if (emojiOnly) reasons.push('reply text is only emoji or emoji plus numbers');
   if (lowInfoMixed) reasons.push('reply text is emoji mixed with very short alnum fragments');
+
+  if (cloudDrivePromo) {
+    return {
+      handle,
+      displayName,
+      isSpamOrBot: true,
+      confidence: 0.96,
+      reason: `Local prefilter: ${reasons.join(', ')}`,
+      evidenceTweet: text,
+      source: 'local-prefilter',
+      selected: true
+    };
+  }
 
   if ((adultName && (tinyToken || emojiOnly || randomHandle || lowInfoMixed)) || (randomHandle && (tinyToken || emojiOnly || lowInfoMixed))) {
     return {
@@ -1096,13 +1380,22 @@ function calcTextSimilarity(text1, text2) {
 // Detect copy-paste/auto-reply patterns: accounts with near-identical messages
 function detectAutoReplyBots(batch, results) {
   if (!batch || !results || batch.length < 2) return;
-  
+
+  // Build a handle→result map so we are not relying on array order.
+  // The LLM response does not guarantee the same order as the input batch.
+  const resultByHandle = new Map();
+  results.forEach(r => {
+    if (r?.handle) {
+      resultByHandle.set(String(r.handle).toLowerCase(), r);
+    }
+  });
+
   // Group results by tweet similarity
   const tweetsWithResults = batch
-    .map((tweet, i) => ({
+    .map(tweet => ({
       tweet: tweet.text || '',
       handle: tweet.handle,
-      result: results[i]
+      result: resultByHandle.get(String(tweet.handle || '').toLowerCase())
     }))
     .filter(x => x.result);
   
@@ -1243,9 +1536,25 @@ async function startAnalysisForTab(tabId) {
       progressText: '正在采集推文…'
     });
 
+    const cfg = await getProviderConfig();
+    const targetRounds = Math.ceil(cfg.scrapeMaxTweets / 6);
+    const effectiveScrapeRounds = Math.min(300, Math.max(cfg.scrapeMaxRounds, targetRounds));
+    const scrapeTimeoutMs = Math.min(
+      600000,
+      Math.max(15000, cfg.scrapeScrollWaitMs * effectiveScrapeRounds + 15000)
+    );
+
     const scrapeResp = await withTimeout(
-      sendToTabSafe(tabId, { action: 'scrapeTweets' }),
-      15000,
+      sendToTabSafe(tabId, {
+        action: 'scrapeTweets',
+        scrapeConfig: {
+          scrollWaitMs: cfg.scrapeScrollWaitMs,
+          maxRounds: effectiveScrapeRounds,
+          maxTweets: cfg.scrapeMaxTweets,
+          stagnantRounds: cfg.scrapeStagnantRounds
+        }
+      }),
+      scrapeTimeoutMs,
       '采集超时，请刷新页面后重试'
     );
     if (!scrapeResp?.ok) {
@@ -1275,7 +1584,7 @@ async function startAnalysisForTab(tabId) {
         scannedTweetCount: allTweets.length,
         candidates: [],
         error: '',
-        progressText: skippedCount > 0 ? `已全部扫描（跳过 ${skippedCount} 个重复用户）` : ''
+        progressText: skippedCount > 0 ? `已采集 ${allTweets.length} 条，全部为已分析用户（跳过 ${skippedCount} 个）` : ''
       });
       return;
     }
@@ -1285,10 +1594,9 @@ async function startAnalysisForTab(tabId) {
       scannedTweetCount: allTweets.length,
       candidates: [],
       error: '',
-      progressText: `正在分析 ${tweets.length} 条新推文${skippedCount > 0 ? `（跳过 ${skippedCount} 个已扫描）` : ''}…`
+      progressText: `已采集 ${allTweets.length} 条，正在分析 ${tweets.length} 个新用户${skippedCount > 0 ? `（跳过 ${skippedCount} 个已分析用户）` : ''}…`
     });
 
-    const cfg = await getProviderConfig();
     const prefilter = splitObviousBotReplies(tweets, cfg.obviousBotKeywords);
     const results = prefilter.localResults.slice();
 
@@ -1299,7 +1607,7 @@ async function startAnalysisForTab(tabId) {
           scannedTweetCount: allTweets.length,
           candidates: [],
           error: '',
-          progressText: `正在分析：${done}/${total}，已本地预过滤 ${prefilter.localResults.length} 个明显账号`
+          progressText: `已采集 ${allTweets.length} 条；AI 分析 ${done}/${total}；本地预过滤 ${prefilter.localResults.length} 个`
         });
       });
       results.push(...modelResults);
@@ -1402,7 +1710,7 @@ async function performDeepScan(cfg) {
     } catch (_) {}
 
     deepScanState.currentStep = '正在采集最近的帖子链接…';
-    const postUrls = await collectUserPostLinks(workerTab.id, maxPosts);
+    const postUrls = await collectUserPostLinks(workerTab.id, maxPosts, handle, cfg);
     console.log(`[DeepScan] 采集到 ${postUrls.length} 条帖子链接`);
 
     if (deepScanState.cancelled) {
@@ -1439,7 +1747,7 @@ async function performDeepScan(cfg) {
         await waitForTabLoaded(workerTab.id, 12000);
       } catch (_) {}
 
-      const replies = await collectPostReplies(workerTab.id, maxRepliesPerPost);
+      const replies = await collectPostReplies(workerTab.id, maxRepliesPerPost, cfg);
       console.log(`[DeepScan] 第 ${i + 1} 条帖子采集到 ${replies.length} 条回复`);
       deepScanState.repliesCollected.push(...replies);
       deepScanState.repliesCount = deepScanState.repliesCollected.length;
@@ -1452,7 +1760,7 @@ async function performDeepScan(cfg) {
         break;
       }
 
-      await sleep(600);
+      await sleep(1500);
     }
 
     if (deepScanState.repliesCollected.length === 0) {
@@ -1485,11 +1793,11 @@ async function performDeepScan(cfg) {
     }
 
     deepScanState.candidates = normalizeCandidates(results, cfg.spamConfidenceThreshold);
+    deepScanState.candidatesCount = deepScanState.candidates.length;
     console.log(`[DeepScan] 标准化候选人 (门槛: ${cfg.spamConfidenceThreshold}) - 最终: ${deepScanState.candidatesCount}`);
     deepScanState.candidates.forEach(c => {
       console.log(`  - ${c.handle} (${c.displayName}) 置信度: ${c.confidence.toFixed(2)}`);
     });
-    deepScanState.candidatesCount = deepScanState.candidates.length;
     deepScanState.currentStep = `扫描完成，找到 ${deepScanState.candidatesCount} 个疑似账号`;
     deepScanState.completed = true;
 
@@ -1500,9 +1808,11 @@ async function performDeepScan(cfg) {
     }
 
     deepScanState.running = false;
+    saveDeepScanState();
   } catch (e) {
     deepScanState.error = e.message;
     deepScanState.running = false;
+    saveDeepScanState();
   } finally {
     // Clean up worker tab
     if (deepScanState.workerTabId) {
@@ -1521,13 +1831,19 @@ function continueDeepScan() {
   }
 }
 
-async function collectUserPostLinks(tabId, maxLinks = 20) {
+async function collectUserPostLinks(tabId, maxLinks = 20, targetHandle = '', cfg = {}) {
   const links = [];
+  const linkSet = new Set();
+  const maxRounds = normalizeScrapeMaxRounds(cfg.scrapeMaxRounds);
+  const waitMs = normalizeScrapeScrollWaitMs(cfg.scrapeScrollWaitMs);
+  const stagnantLimit = normalizeScrapeStagnantRounds(cfg.scrapeStagnantRounds);
   let lastCount = 0;
   let stagnantRounds = 0;
+  // Normalise handle for path matching: "@foo" or "foo" → "/foo/"
+  const handleSlug = targetHandle.replace(/^@/, '').toLowerCase();
 
-  for (let i = 0; i < 15; i++) {
-    const result = await executeInTab(tabId, () => {
+  for (let i = 0; i < maxRounds; i++) {
+    const result = await executeInTab(tabId, (slug) => {
       const posts = [];
       const articles = document.querySelectorAll('article[data-testid="tweet"]');
       articles.forEach(article => {
@@ -1535,47 +1851,96 @@ async function collectUserPostLinks(tabId, maxLinks = 20) {
           const timeEl = article.querySelector('time');
           const statusA = timeEl ? timeEl.closest('a') : null;
           const statusPath = statusA ? statusA.getAttribute('href') || '' : '';
-          const match = statusPath.match(/\/status\/\d+/);
-          if (match) {
-            const url = `https://x.com${statusPath}`;
-            if (!posts.includes(url)) posts.push(url);
-          }
+          // Bug 3 fix: only collect posts that belong to the target blogger.
+          // A post URL follows the pattern "/{handle}/status/{id}", so we
+          // verify the path starts with the expected user segment.
+          if (!statusPath) return;
+          const pathLower = statusPath.toLowerCase();
+          const expectedPrefix = `/${slug}/status/`;
+          if (!pathLower.startsWith(expectedPrefix)) return;
+          const url = `https://x.com${statusPath}`;
+          if (!posts.includes(url)) posts.push(url);
         } catch (_) {}
       });
       return posts;
-    }).catch(() => []);
+    }, [handleSlug]).catch(() => []);
 
-    links.push(...result.filter(link => !links.includes(link)));
+    result.forEach(link => {
+      if (!linkSet.has(link)) {
+        linkSet.add(link);
+        links.push(link);
+      }
+    });
 
     if (links.length >= maxLinks) break;
 
     if (links.length <= lastCount) {
       stagnantRounds++;
-      if (stagnantRounds >= 2) break;
+      if (stagnantRounds >= stagnantLimit) break;
     } else {
       stagnantRounds = 0;
     }
 
     lastCount = links.length;
     await executeInTab(tabId, () => {
-      window.scrollBy({ top: Math.max(window.innerHeight * 0.8, 600), behavior: 'auto' });
+      window.scrollBy({ top: Math.max(window.innerHeight * 0.9, 800), behavior: 'auto' });
       return true;
     }).catch(() => {});
-    await sleep(700);
+    const waitNextMs = stagnantRounds > 0 ? waitMs : Math.max(600, Math.round(waitMs * 0.82));
+    await sleep(waitNextMs);
   }
 
   return links.slice(0, maxLinks);
 }
 
-async function collectPostReplies(tabId, maxReplies = 100) {
+/**
+ * Poll until at least `minCount` article[data-testid="tweet"] elements exist
+ * in the tab's DOM, or until `timeoutMs` elapses.
+ * Returns true if the target count was reached, false on timeout.
+ */
+async function waitForRepliesRendered(tabId, minCount = 2, timeoutMs = 15000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const count = await executeInTab(tabId, () =>
+      document.querySelectorAll('article[data-testid="tweet"]').length
+    ).catch(() => 0);
+    if (count >= minCount) return true;
+    await sleep(300);
+  }
+  return false;
+}
+
+async function collectPostReplies(tabId, maxReplies = 100, cfg = {}) {
+  // Bug 4 fix: we no longer deduplicate by handle across the entire function.
+  // Each scroll round deduplicates only within itself (via the in-page `seen`
+  // Set), but the same user can appear in multiple rounds with different tweet
+  // texts. This lets detectAutoReplyBots() compare multiple messages per user
+  // and identify copy-paste / template bots.
   const replies = [];
+  // Track unique (handle, tweetUrl) pairs so we do not add the exact same
+  // tweet twice (e.g. when the same article is still visible after a scroll).
+  const seenKeys = new Set();
+  const maxRounds = normalizeScrapeMaxRounds(cfg.scrapeMaxRounds);
+  const waitMs = normalizeScrapeScrollWaitMs(cfg.scrapeScrollWaitMs);
+  const stagnantLimit = normalizeScrapeStagnantRounds(cfg.scrapeStagnantRounds);
   let lastCount = 0;
   let stagnantRounds = 0;
 
-  for (let i = 0; i < 12; i++) {
+  // X.com is a SPA: tab status=complete fires before React has rendered reply
+  // articles. Wait until at least 2 articles are present (index 0 = original
+  // tweet, index 1+ = replies) before starting the scroll loop.
+  const repliesAppearTimeout = Math.max(15000, Math.round(waitMs * 8));
+  const repliesAppeared = await waitForRepliesRendered(tabId, 2, repliesAppearTimeout);
+  if (!repliesAppeared) {
+    console.log('[DeepScan] collectPostReplies: 等待回复节点超时，跳过此帖');
+    return [];
+  }
+
+  for (let i = 0; i < maxRounds; i++) {
     const result = await executeInTab(tabId, () => {
       const tweets = [];
       const articles = document.querySelectorAll('article[data-testid="tweet"]');
+      // Deduplicate within this single DOM snapshot only.
       const seen = new Set();
 
       articles.forEach(article => {
@@ -1596,14 +1961,22 @@ async function collectPostReplies(tabId, maxReplies = 100) {
           }
 
           if (!handle) return;
-          if (seen.has(handle.toLowerCase())) return;
-          seen.add(handle.toLowerCase());
+
+          const timeEl = article.querySelector('time');
+          const statusA = timeEl ? timeEl.closest('a') : null;
+          const statusPath = statusA ? statusA.getAttribute('href') || '' : '';
+          const tweetUrl = statusPath ? `https://x.com${statusPath}` : '';
+
+          // Deduplicate within this snapshot by (handle, tweetUrl).
+          const snapKey = `${handle.toLowerCase()}|${tweetUrl}`;
+          if (seen.has(snapKey)) return;
+          seen.add(snapKey);
 
           let displayName = '';
           const spans = userNameBlock.querySelectorAll('span');
           for (const s of spans) {
-            const t = s.textContent.trim();
-            if (t && !t.startsWith('@') && s.children.length === 0) {
+            const t = (s.innerText || s.textContent).trim();
+            if (t && !t.startsWith('@')) {
               displayName = t;
               break;
             }
@@ -1612,28 +1985,28 @@ async function collectPostReplies(tabId, maxReplies = 100) {
           const textEl = article.querySelector('[data-testid="tweetText"]');
           const text = textEl ? textEl.innerText.trim() : '';
 
-          const timeEl = article.querySelector('time');
-          const statusA = timeEl ? timeEl.closest('a') : null;
-          const statusPath = statusA ? statusA.getAttribute('href') || '' : '';
-          const tweetUrl = statusPath ? `https://x.com${statusPath}` : '';
-
-          if (text) {
-            tweets.push({
-              handle,
-              displayName,
-              text,
-              tweetUrl,
-              profileUrl: `https://x.com/${handle.replace('@', '')}`
-            });
-          }
+          // #5 fix: keep media-only tweets (no text) with a placeholder
+          // so image-spam bots are not silently skipped.
+          const effectiveText = text || '[媒体内容/无文字推文]';
+          tweets.push({
+            handle,
+            displayName,
+            text: effectiveText,
+            tweetUrl,
+            profileUrl: `https://x.com/${handle.replace('@', '')}`
+          });
         } catch (_) {}
       });
 
       return tweets;
     }).catch(() => []);
 
+    // Merge into replies, deduplicating only by exact (handle, tweetUrl) key
+    // so different tweets from the same user are all preserved.
     result.forEach(r => {
-      if (!replies.find(rep => rep.handle.toLowerCase() === r.handle.toLowerCase())) {
+      const key = `${r.handle.toLowerCase()}|${r.tweetUrl}`;
+      if (!seenKeys.has(key)) {
+        seenKeys.add(key);
         replies.push(r);
       }
     });
@@ -1642,7 +2015,7 @@ async function collectPostReplies(tabId, maxReplies = 100) {
 
     if (replies.length <= lastCount) {
       stagnantRounds++;
-      if (stagnantRounds >= 2) break;
+      if (stagnantRounds >= stagnantLimit) break;
     } else {
       stagnantRounds = 0;
     }
@@ -1652,7 +2025,8 @@ async function collectPostReplies(tabId, maxReplies = 100) {
       window.scrollBy({ top: Math.max(window.innerHeight * 0.8, 600), behavior: 'auto' });
       return true;
     }).catch(() => {});
-    await sleep(600);
+    const waitNextMs = stagnantRounds > 0 ? waitMs : Math.max(600, Math.round(waitMs * 0.82));
+    await sleep(waitNextMs);
   }
 
   return replies.slice(0, maxReplies);
@@ -1710,7 +2084,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   }
 
   if (msg.action === 'retryFailedGlobalBlocking') {
-    const retried = retryFailedBlockItems();
+    const retried = retryFailedBlockItems(); // recalcTotals → saveBlockQueueState inside
     if (retried > 0) {
       runGlobalBlockQueue();
     }
@@ -1719,22 +2093,34 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   }
 
   if (msg.action === 'clearDoneGlobalBlocking') {
-    const cleared = clearCompletedBlockItems();
+    const cleared = clearCompletedBlockItems(); // recalcTotals → saveBlockQueueState inside
     sendResponse({ ok: true, cleared, status: getBlockStatusSnapshot() });
     return false;
   }
 
+  if (msg.action === 'clearDeepScanCompleted') {
+    deepScanState.completed       = false;
+    deepScanState.candidates      = [];
+    deepScanState.candidatesCount = 0;
+    deepScanState.error           = '';
+    deepScanState.currentStep     = '';
+    saveDeepScanState();
+    sendResponse({ ok: true });
+    return false;
+  }
+
   if (msg.action === 'pauseGlobalBlocking') {
-    blockQueue.paused = true;
-    blockQueue.running = false;
-    blockQueue.current = null;
+    blockQueue.paused   = true;
+    saveBlockQueueState();
     sendResponse({ ok: true, status: getBlockStatusSnapshot() });
     return false;
   }
 
   if (msg.action === 'resumeGlobalBlocking') {
-    blockQueue.paused = false;
+    blockQueue.paused   = false;
     blockQueue.errorMsg = '';
+    blockQueue.consecutiveFails = 0;
+    saveBlockQueueState();
     runGlobalBlockQueue();
     sendResponse({ ok: true, status: getBlockStatusSnapshot() });
     return false;
