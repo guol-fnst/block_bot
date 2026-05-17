@@ -1162,8 +1162,33 @@ const BUILT_IN_OBVIOUS_BOT_KEYWORDS = [
   'hookup',
   'porn',
   'nude',
-  'casino'
+  'casino',
+  '夸克网盘',
+  '夸克盘',
+  'pan.quark.cn',
+  'quark网盘'
 ];
+
+function hasCloudDrivePromoSignal(text, customKeywords = []) {
+  const value = String(text || '').toLowerCase();
+  if (!value) return false;
+
+  const compact = value.replace(/\s+/g, '');
+  if (
+    compact.includes('pan.quark.cn') ||
+    compact.includes('quark.cn/s/') ||
+    compact.includes('夸克网盘') ||
+    compact.includes('夸克盘') ||
+    compact.includes('quark网盘')
+  ) {
+    return true;
+  }
+
+  return normalizeKeywordList(customKeywords).some(keyword => {
+    const k = String(keyword || '').toLowerCase().trim();
+    return k && value.includes(k);
+  });
+}
 
 function normalizeKeywordList(keywords) {
   const raw = Array.isArray(keywords)
@@ -1223,14 +1248,29 @@ function detectObviousBotReply(tweet, customKeywords = []) {
   const reasons = [];
 
   const adultName = hasObviousBotKeyword(displayName, customKeywords) || hasObviousBotKeyword(handle, customKeywords);
+  const cloudDrivePromo = hasCloudDrivePromoSignal(text, customKeywords);
   const randomHandle = looksLikeRandomHandle(handle);
   const tinyToken = isTinyTokenReply(text);
   const emojiOnly = isEmojiOnlyOrEmojiNumberReply(text);
 
   if (adultName) reasons.push('display name or handle contains adult/spam lure keywords');
+  if (cloudDrivePromo) reasons.push('reply text contains cloud-drive promo link keywords');
   if (randomHandle) reasons.push('handle looks randomly generated');
   if (tinyToken) reasons.push('reply text is only a tiny token/number');
   if (emojiOnly) reasons.push('reply text is only emoji or emoji plus numbers');
+
+  if (cloudDrivePromo) {
+    return {
+      handle,
+      displayName,
+      isSpamOrBot: true,
+      confidence: 0.96,
+      reason: `Local prefilter: ${reasons.join(', ')}`,
+      evidenceTweet: text,
+      source: 'local-prefilter',
+      selected: true
+    };
+  }
 
   if ((adultName && (tinyToken || emojiOnly || randomHandle)) || (randomHandle && (tinyToken || emojiOnly))) {
     return {
