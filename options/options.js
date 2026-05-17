@@ -19,6 +19,7 @@ const analysisBatchSizeInput = document.getElementById('analysis-batch-size');
 const analysisParallelismInput = document.getElementById('analysis-parallelism');
 const scrapeScrollWaitMsInput = document.getElementById('scrape-scroll-wait-ms');
 const scrapeMaxRoundsInput = document.getElementById('scrape-max-rounds');
+const scrapeMaxTweetsInput = document.getElementById('scrape-max-tweets');
 const scrapeStagnantRoundsInput = document.getElementById('scrape-stagnant-rounds');
 
 // Keep in sync with background.js defaultDetectionRules()
@@ -46,7 +47,8 @@ const DEFAULT_SPAM_THRESHOLD = 0.8;
 const DEFAULT_ANALYSIS_BATCH_SIZE = 15;
 const DEFAULT_ANALYSIS_PARALLELISM = 0;
 const DEFAULT_SCRAPE_SCROLL_WAIT_MS = 1200;
-const DEFAULT_SCRAPE_MAX_ROUNDS = 12;
+const DEFAULT_SCRAPE_MAX_ROUNDS = 120;
+const DEFAULT_SCRAPE_MAX_TWEETS = 1000;
 const DEFAULT_SCRAPE_STAGNANT_ROUNDS = 4;
 
 function normalizeThreshold(raw) {
@@ -82,7 +84,11 @@ function normalizeScrapeScrollWaitMs(raw) {
 }
 
 function normalizeScrapeMaxRounds(raw) {
-  return normalizeInt(raw, 6, 25, DEFAULT_SCRAPE_MAX_ROUNDS);
+  return normalizeInt(raw, 6, 300, DEFAULT_SCRAPE_MAX_ROUNDS);
+}
+
+function normalizeScrapeMaxTweets(raw) {
+  return normalizeInt(raw, 20, 5000, DEFAULT_SCRAPE_MAX_TWEETS);
 }
 
 function normalizeScrapeStagnantRounds(raw) {
@@ -269,6 +275,7 @@ chrome.storage.local.get(
     'analysisParallelism',
     'scrapeScrollWaitMs',
     'scrapeMaxRounds',
+    'scrapeMaxTweets',
     'scrapeStagnantRounds'
   ],
   d => {
@@ -286,6 +293,7 @@ chrome.storage.local.get(
     analysisParallelismInput.value = String(normalizeAnalysisParallelism(d.analysisParallelism));
     scrapeScrollWaitMsInput.value = String(normalizeScrapeScrollWaitMs(d.scrapeScrollWaitMs));
     scrapeMaxRoundsInput.value = String(normalizeScrapeMaxRounds(d.scrapeMaxRounds));
+    scrapeMaxTweetsInput.value = String(normalizeScrapeMaxTweets(d.scrapeMaxTweets));
     scrapeStagnantRoundsInput.value = String(normalizeScrapeStagnantRounds(d.scrapeStagnantRounds));
     customPromptInput.value = (typeof d.customDetectionPrompt === 'string' && d.customDetectionPrompt.trim())
       ? d.customDetectionPrompt
@@ -466,12 +474,14 @@ document.getElementById('btn-save-performance').addEventListener('click', () => 
   const analysisParallelism = normalizeAnalysisParallelism(analysisParallelismInput.value);
   const scrapeScrollWaitMs = normalizeScrapeScrollWaitMs(scrapeScrollWaitMsInput.value);
   const scrapeMaxRounds = normalizeScrapeMaxRounds(scrapeMaxRoundsInput.value);
+  const scrapeMaxTweets = normalizeScrapeMaxTweets(scrapeMaxTweetsInput.value);
   const scrapeStagnantRounds = normalizeScrapeStagnantRounds(scrapeStagnantRoundsInput.value);
 
   analysisBatchSizeInput.value = String(analysisBatchSize);
   analysisParallelismInput.value = String(analysisParallelism);
   scrapeScrollWaitMsInput.value = String(scrapeScrollWaitMs);
   scrapeMaxRoundsInput.value = String(scrapeMaxRounds);
+  scrapeMaxTweetsInput.value = String(scrapeMaxTweets);
   scrapeStagnantRoundsInput.value = String(scrapeStagnantRounds);
 
   chrome.storage.local.set(
@@ -480,6 +490,7 @@ document.getElementById('btn-save-performance').addEventListener('click', () => 
       analysisParallelism,
       scrapeScrollWaitMs,
       scrapeMaxRounds,
+      scrapeMaxTweets,
       scrapeStagnantRounds
     },
     () => showPerformanceMsg('性能参数已保存 ✓', true)

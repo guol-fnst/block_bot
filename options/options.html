@@ -188,9 +188,20 @@
         id="scrape-max-rounds"
         class="input"
         min="6"
-        max="25"
+        max="300"
         step="1"
-        placeholder="12"
+        placeholder="120"
+      />
+
+      <label class="field-label" for="scrape-max-tweets">最大采集回复数</label>
+      <input
+        type="number"
+        id="scrape-max-tweets"
+        class="input"
+        min="20"
+        max="5000"
+        step="20"
+        placeholder="1000"
       />
 
       <label class="field-label" for="scrape-stagnant-rounds">采集停滞轮数阈值</label>

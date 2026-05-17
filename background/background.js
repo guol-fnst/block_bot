@@ -7,7 +7,8 @@
 const DEFAULT_ANALYSIS_BATCH_SIZE = 15;
 const DEFAULT_ANALYSIS_PARALLELISM = 0; // 0 = provider-based auto
 const DEFAULT_SCRAPE_SCROLL_WAIT_MS = 1200;
-const DEFAULT_SCRAPE_MAX_ROUNDS = 12;
+const DEFAULT_SCRAPE_MAX_ROUNDS = 120;
+const DEFAULT_SCRAPE_MAX_TWEETS = 1000;
 const DEFAULT_SCRAPE_STAGNANT_ROUNDS = 4;
 const CONFIDENCE_THRESHOLD = 0.8;
 const ANALYSIS_KEY_PREFIX = 'analysisCache:';
@@ -800,7 +801,11 @@ function normalizeScrapeScrollWaitMs(raw) {
 }
 
 function normalizeScrapeMaxRounds(raw) {
-  return normalizeInt(raw, 6, 25, DEFAULT_SCRAPE_MAX_ROUNDS);
+  return normalizeInt(raw, 6, 300, DEFAULT_SCRAPE_MAX_ROUNDS);
+}
+
+function normalizeScrapeMaxTweets(raw) {
+  return normalizeInt(raw, 20, 5000, DEFAULT_SCRAPE_MAX_TWEETS);
 }
 
 function normalizeScrapeStagnantRounds(raw) {
@@ -841,6 +846,7 @@ async function getProviderConfig() {
     'analysisParallelism',
     'scrapeScrollWaitMs',
     'scrapeMaxRounds',
+    'scrapeMaxTweets',
     'scrapeStagnantRounds'
   ]);
 
@@ -860,6 +866,7 @@ async function getProviderConfig() {
     analysisParallelism: normalizeAnalysisParallelism(d.analysisParallelism),
     scrapeScrollWaitMs: normalizeScrapeScrollWaitMs(d.scrapeScrollWaitMs),
     scrapeMaxRounds: normalizeScrapeMaxRounds(d.scrapeMaxRounds),
+    scrapeMaxTweets: normalizeScrapeMaxTweets(d.scrapeMaxTweets),
     scrapeStagnantRounds: normalizeScrapeStagnantRounds(d.scrapeStagnantRounds)
   };
 }
@@ -1513,9 +1520,11 @@ async function startAnalysisForTab(tabId) {
     });
 
     const cfg = await getProviderConfig();
+    const targetRounds = Math.ceil(cfg.scrapeMaxTweets / 6);
+    const effectiveScrapeRounds = Math.min(300, Math.max(cfg.scrapeMaxRounds, targetRounds));
     const scrapeTimeoutMs = Math.min(
-      45000,
-      Math.max(15000, cfg.scrapeScrollWaitMs * cfg.scrapeMaxRounds + 8000)
+      600000,
+      Math.max(15000, cfg.scrapeScrollWaitMs * effectiveScrapeRounds + 15000)
     );
 
     const scrapeResp = await withTimeout(
@@ -1523,7 +1532,8 @@ async function startAnalysisForTab(tabId) {
         action: 'scrapeTweets',
         scrapeConfig: {
           scrollWaitMs: cfg.scrapeScrollWaitMs,
-          maxRounds: cfg.scrapeMaxRounds,
+          maxRounds: effectiveScrapeRounds,
+          maxTweets: cfg.scrapeMaxTweets,
           stagnantRounds: cfg.scrapeStagnantRounds
         }
       }),
@@ -1557,7 +1567,7 @@ async function startAnalysisForTab(tabId) {
         scannedTweetCount: allTweets.length,
         candidates: [],
         error: '',
-        progressText: skippedCount > 0 ? `已全部扫描（跳过 ${skippedCount} 个重复用户）` : ''
+        progressText: skippedCount > 0 ? `已采集 ${allTweets.length} 条，全部为已分析用户（跳过 ${skippedCount} 个）` : ''
       });
       return;
     }
@@ -1567,7 +1577,7 @@ async function startAnalysisForTab(tabId) {
       scannedTweetCount: allTweets.length,
       candidates: [],
       error: '',
-      progressText: `正在分析 ${tweets.length} 条新推文${skippedCount > 0 ? `（跳过 ${skippedCount} 个已扫描）` : ''}…`
+      progressText: `已采集 ${allTweets.length} 条，正在分析 ${tweets.length} 个新用户${skippedCount > 0 ? `（跳过 ${skippedCount} 个已分析用户）` : ''}…`
     });
 
     const prefilter = splitObviousBotReplies(tweets, cfg.obviousBotKeywords);
@@ -1580,7 +1590,7 @@ async function startAnalysisForTab(tabId) {
           scannedTweetCount: allTweets.length,
           candidates: [],
           error: '',
-          progressText: `正在分析：${done}/${total}，已本地预过滤 ${prefilter.localResults.length} 个明显账号`
+          progressText: `已采集 ${allTweets.length} 条；AI 分析 ${done}/${total}；本地预过滤 ${prefilter.localResults.length} 个`
         });
       });
       results.push(...modelResults);

@@ -6,8 +6,9 @@
   'use strict';
 
   const DEFAULT_SCRAPE_SCROLL_WAIT_MS = 1200;
-  const DEFAULT_SCRAPE_MAX_ROUNDS = 12;
+  const DEFAULT_SCRAPE_MAX_ROUNDS = 120;
   const DEFAULT_SCRAPE_STAGNANT_ROUNDS = 4;
+  const DEFAULT_SCRAPE_MAX_TWEETS = 1000;
 
   function sleep(ms) {
     return new Promise(resolve => setTimeout(resolve, ms));
@@ -131,7 +132,10 @@
   }
 
   async function collectTweetsWithAutoScroll(threadAuthorHandle, scrapeConfig = {}) {
-    const maxRounds = normalizeInt(scrapeConfig.maxRounds, 6, 25, DEFAULT_SCRAPE_MAX_ROUNDS);
+    const maxTweets = normalizeInt(scrapeConfig.maxTweets, 20, 5000, DEFAULT_SCRAPE_MAX_TWEETS);
+    const configuredMaxRounds = normalizeInt(scrapeConfig.maxRounds, 6, 300, DEFAULT_SCRAPE_MAX_ROUNDS);
+    const targetBasedRounds = Math.ceil(maxTweets / 6);
+    const maxRounds = Math.min(300, Math.max(configuredMaxRounds, targetBasedRounds));
     const waitMs = normalizeInt(scrapeConfig.scrollWaitMs, 600, 2500, DEFAULT_SCRAPE_SCROLL_WAIT_MS);
     const stagnantLimit = normalizeInt(scrapeConfig.stagnantRounds, 2, 8, DEFAULT_SCRAPE_STAGNANT_ROUNDS);
     const confirmWaitMs = Math.min(2800, waitMs + 250);
@@ -144,6 +148,7 @@
     for (let i = 0; i < maxRounds; i++) {
       const visible = collectVisibleTweets(threadAuthorHandle);
       mergeTweetsIntoMap(merged, visible);
+      if (merged.size >= maxTweets) break;
 
       const currentSize = merged.size;
       const currentHeight = document.body.scrollHeight;
@@ -161,6 +166,7 @@
         await sleep(confirmWaitMs);
         const afterWait = collectVisibleTweets(threadAuthorHandle);
         mergeTweetsIntoMap(merged, afterWait);
+        if (merged.size >= maxTweets) break;
         if (merged.size <= lastSize && document.body.scrollHeight <= lastHeight + 10) {
           break;
         }
@@ -180,7 +186,7 @@
     window.scrollBy({ top: Math.max(window.innerHeight * 1.2, 1000), behavior: 'auto' });
     await sleep(confirmWaitMs);
     mergeTweetsIntoMap(merged, collectVisibleTweets(threadAuthorHandle));
-    return Array.from(merged.values()).map(({ uniqueId, ...tweet }) => tweet);
+    return Array.from(merged.values()).slice(0, maxTweets).map(({ uniqueId, ...tweet }) => tweet);
   }
 
   // ── Tweet scraping ───────────────────────────────────────────────────────────
