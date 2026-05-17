@@ -15,6 +15,11 @@ const modelSuggestions = document.getElementById('model-suggestions');
 const spamThresholdInput = document.getElementById('spam-threshold');
 const obviousBotKeywordsInput = document.getElementById('obvious-bot-keywords');
 const customPromptInput = document.getElementById('custom-prompt');
+const analysisBatchSizeInput = document.getElementById('analysis-batch-size');
+const analysisParallelismInput = document.getElementById('analysis-parallelism');
+const scrapeScrollWaitMsInput = document.getElementById('scrape-scroll-wait-ms');
+const scrapeMaxRoundsInput = document.getElementById('scrape-max-rounds');
+const scrapeStagnantRoundsInput = document.getElementById('scrape-stagnant-rounds');
 
 // Keep in sync with background.js defaultDetectionRules()
 const DEFAULT_DETECTION_RULES = [
@@ -38,6 +43,11 @@ const toggleGeminiBtn = document.getElementById('btn-toggle-gemini');
 const toggleOpenaiBtn = document.getElementById('btn-toggle-openai');
 
 const DEFAULT_SPAM_THRESHOLD = 0.8;
+const DEFAULT_ANALYSIS_BATCH_SIZE = 15;
+const DEFAULT_ANALYSIS_PARALLELISM = 0;
+const DEFAULT_SCRAPE_SCROLL_WAIT_MS = 1200;
+const DEFAULT_SCRAPE_MAX_ROUNDS = 12;
+const DEFAULT_SCRAPE_STAGNANT_ROUNDS = 4;
 
 function normalizeThreshold(raw) {
   const v = Number(raw);
@@ -45,6 +55,38 @@ function normalizeThreshold(raw) {
   if (v < 0.5) return 0.5;
   if (v > 1) return 1;
   return v;
+}
+
+function normalizeInt(raw, min, max, fallback) {
+  const v = Number(raw);
+  if (!Number.isFinite(v)) return fallback;
+  const n = Math.round(v);
+  if (n < min) return min;
+  if (n > max) return max;
+  return n;
+}
+
+function normalizeAnalysisBatchSize(raw) {
+  return normalizeInt(raw, 5, 40, DEFAULT_ANALYSIS_BATCH_SIZE);
+}
+
+function normalizeAnalysisParallelism(raw) {
+  const v = Number(raw);
+  if (!Number.isFinite(v)) return DEFAULT_ANALYSIS_PARALLELISM;
+  if (v <= 0) return 0;
+  return normalizeInt(v, 1, 6, DEFAULT_ANALYSIS_PARALLELISM);
+}
+
+function normalizeScrapeScrollWaitMs(raw) {
+  return normalizeInt(raw, 600, 2500, DEFAULT_SCRAPE_SCROLL_WAIT_MS);
+}
+
+function normalizeScrapeMaxRounds(raw) {
+  return normalizeInt(raw, 6, 25, DEFAULT_SCRAPE_MAX_ROUNDS);
+}
+
+function normalizeScrapeStagnantRounds(raw) {
+  return normalizeInt(raw, 2, 8, DEFAULT_SCRAPE_STAGNANT_ROUNDS);
 }
 
 function parseKeywordList(text) {
@@ -222,7 +264,12 @@ chrome.storage.local.get(
     'openaiModel',
     'spamConfidenceThreshold',
     'obviousBotKeywords',
-    'customDetectionPrompt'
+    'customDetectionPrompt',
+    'analysisBatchSize',
+    'analysisParallelism',
+    'scrapeScrollWaitMs',
+    'scrapeMaxRounds',
+    'scrapeStagnantRounds'
   ],
   d => {
     providerSel.value = normalizeProvider(d.llmProvider || 'gemini');
@@ -235,6 +282,11 @@ chrome.storage.local.get(
     obviousBotKeywordsInput.value = Array.isArray(d.obviousBotKeywords)
       ? d.obviousBotKeywords.join('\n')
       : '';
+    analysisBatchSizeInput.value = String(normalizeAnalysisBatchSize(d.analysisBatchSize));
+    analysisParallelismInput.value = String(normalizeAnalysisParallelism(d.analysisParallelism));
+    scrapeScrollWaitMsInput.value = String(normalizeScrapeScrollWaitMs(d.scrapeScrollWaitMs));
+    scrapeMaxRoundsInput.value = String(normalizeScrapeMaxRounds(d.scrapeMaxRounds));
+    scrapeStagnantRoundsInput.value = String(normalizeScrapeStagnantRounds(d.scrapeStagnantRounds));
     customPromptInput.value = (typeof d.customDetectionPrompt === 'string' && d.customDetectionPrompt.trim())
       ? d.customDetectionPrompt
       : DEFAULT_DETECTION_RULES;
@@ -409,6 +461,31 @@ document.getElementById('btn-save-prompt').addEventListener('click', () => {
   );
 });
 
+document.getElementById('btn-save-performance').addEventListener('click', () => {
+  const analysisBatchSize = normalizeAnalysisBatchSize(analysisBatchSizeInput.value);
+  const analysisParallelism = normalizeAnalysisParallelism(analysisParallelismInput.value);
+  const scrapeScrollWaitMs = normalizeScrapeScrollWaitMs(scrapeScrollWaitMsInput.value);
+  const scrapeMaxRounds = normalizeScrapeMaxRounds(scrapeMaxRoundsInput.value);
+  const scrapeStagnantRounds = normalizeScrapeStagnantRounds(scrapeStagnantRoundsInput.value);
+
+  analysisBatchSizeInput.value = String(analysisBatchSize);
+  analysisParallelismInput.value = String(analysisParallelism);
+  scrapeScrollWaitMsInput.value = String(scrapeScrollWaitMs);
+  scrapeMaxRoundsInput.value = String(scrapeMaxRounds);
+  scrapeStagnantRoundsInput.value = String(scrapeStagnantRounds);
+
+  chrome.storage.local.set(
+    {
+      analysisBatchSize,
+      analysisParallelism,
+      scrapeScrollWaitMs,
+      scrapeMaxRounds,
+      scrapeStagnantRounds
+    },
+    () => showPerformanceMsg('性能参数已保存 ✓', true)
+  );
+});
+
 function showMsg(text, ok) {
   saveMsg.textContent = text;
   saveMsg.className = 'save-msg ' + (ok ? 'ok' : 'err');
@@ -422,6 +499,12 @@ function showThresholdMsg(text, ok) {
 
 function showPromptMsg(text, ok) {
   const el = document.getElementById('prompt-msg');
+  el.textContent = text;
+  el.className = 'save-msg ' + (ok ? 'ok' : 'err');
+}
+
+function showPerformanceMsg(text, ok) {
+  const el = document.getElementById('performance-msg');
   el.textContent = text;
   el.className = 'save-msg ' + (ok ? 'ok' : 'err');
 }

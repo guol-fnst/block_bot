@@ -4,7 +4,11 @@
  */
 'use strict';
 
-const BATCH_SIZE = 15;
+const DEFAULT_ANALYSIS_BATCH_SIZE = 15;
+const DEFAULT_ANALYSIS_PARALLELISM = 0; // 0 = provider-based auto
+const DEFAULT_SCRAPE_SCROLL_WAIT_MS = 1200;
+const DEFAULT_SCRAPE_MAX_ROUNDS = 12;
+const DEFAULT_SCRAPE_STAGNANT_ROUNDS = 4;
 const CONFIDENCE_THRESHOLD = 0.8;
 const ANALYSIS_KEY_PREFIX = 'analysisCache:';
 const API_RETRY_MAX_ATTEMPTS = 4;
@@ -771,6 +775,38 @@ function normalizeThreshold(raw) {
   return v;
 }
 
+function normalizeInt(raw, min, max, fallback) {
+  const v = Number(raw);
+  if (!Number.isFinite(v)) return fallback;
+  const n = Math.round(v);
+  if (n < min) return min;
+  if (n > max) return max;
+  return n;
+}
+
+function normalizeAnalysisBatchSize(raw) {
+  return normalizeInt(raw, 5, 40, DEFAULT_ANALYSIS_BATCH_SIZE);
+}
+
+function normalizeAnalysisParallelism(raw) {
+  const v = Number(raw);
+  if (!Number.isFinite(v)) return DEFAULT_ANALYSIS_PARALLELISM;
+  if (v <= 0) return 0;
+  return normalizeInt(v, 1, 6, 0);
+}
+
+function normalizeScrapeScrollWaitMs(raw) {
+  return normalizeInt(raw, 600, 2500, DEFAULT_SCRAPE_SCROLL_WAIT_MS);
+}
+
+function normalizeScrapeMaxRounds(raw) {
+  return normalizeInt(raw, 6, 25, DEFAULT_SCRAPE_MAX_ROUNDS);
+}
+
+function normalizeScrapeStagnantRounds(raw) {
+  return normalizeInt(raw, 2, 8, DEFAULT_SCRAPE_STAGNANT_ROUNDS);
+}
+
 function normalizeOpenAICompatibleApiUrl(rawUrl) {
   const trimmed = String(rawUrl || '').trim();
   if (!trimmed) return '';
@@ -800,7 +836,12 @@ async function getProviderConfig() {
     'openaiApiType',
     'spamConfidenceThreshold',
     'obviousBotKeywords',
-    'customDetectionPrompt'
+    'customDetectionPrompt',
+    'analysisBatchSize',
+    'analysisParallelism',
+    'scrapeScrollWaitMs',
+    'scrapeMaxRounds',
+    'scrapeStagnantRounds'
   ]);
 
   const provider = d.llmProvider || 'gemini';
@@ -814,7 +855,12 @@ async function getProviderConfig() {
     openaiApiType: d.openaiApiType || (provider === 'anthropic' ? 'anthropic' : 'openai_compat'),
     spamConfidenceThreshold: normalizeThreshold(d.spamConfidenceThreshold),
     obviousBotKeywords: normalizeKeywordList(d.obviousBotKeywords),
-    customDetectionPrompt: d.customDetectionPrompt || ''
+    customDetectionPrompt: d.customDetectionPrompt || '',
+    analysisBatchSize: normalizeAnalysisBatchSize(d.analysisBatchSize),
+    analysisParallelism: normalizeAnalysisParallelism(d.analysisParallelism),
+    scrapeScrollWaitMs: normalizeScrapeScrollWaitMs(d.scrapeScrollWaitMs),
+    scrapeMaxRounds: normalizeScrapeMaxRounds(d.scrapeMaxRounds),
+    scrapeStagnantRounds: normalizeScrapeStagnantRounds(d.scrapeStagnantRounds)
   };
 }
 
@@ -1014,6 +1060,11 @@ function shouldFallbackToChunk(error) {
 }
 
 function getParallelBatchConcurrency(cfg) {
+  const configured = Number(cfg?.analysisParallelism || 0);
+  if (configured > 0) {
+    return Math.min(6, Math.max(1, Math.round(configured)));
+  }
+
   const provider = String(cfg?.provider || '').toLowerCase();
   const apiType = String(cfg?.openaiApiType || '').toLowerCase();
 
@@ -1026,7 +1077,9 @@ function getParallelBatchConcurrency(cfg) {
 async function analyzeTweetsOptimized(tweets, cfg, onProgress) {
   if (!tweets || tweets.length === 0) return [];
 
-  if (tweets.length <= BATCH_SIZE) {
+  const batchSize = normalizeAnalysisBatchSize(cfg?.analysisBatchSize);
+
+  if (tweets.length <= batchSize) {
     const all = await analyzeBatch(tweets, cfg);
     if (onProgress) {
       await onProgress(tweets.length, tweets.length);
@@ -1037,8 +1090,8 @@ async function analyzeTweetsOptimized(tweets, cfg, onProgress) {
   // For larger pages, skip the one-shot request so we do not pay for a slow
   // oversized call before falling back to chunking anyway.
   const batches = [];
-  for (let i = 0; i < tweets.length; i += BATCH_SIZE) {
-    batches.push(tweets.slice(i, i + BATCH_SIZE));
+  for (let i = 0; i < tweets.length; i += batchSize) {
+    batches.push(tweets.slice(i, i + batchSize));
   }
 
   const total = tweets.length;
@@ -1419,9 +1472,22 @@ async function startAnalysisForTab(tabId) {
       progressText: '正在采集推文…'
     });
 
+    const cfg = await getProviderConfig();
+    const scrapeTimeoutMs = Math.min(
+      45000,
+      Math.max(15000, cfg.scrapeScrollWaitMs * cfg.scrapeMaxRounds + 8000)
+    );
+
     const scrapeResp = await withTimeout(
-      sendToTabSafe(tabId, { action: 'scrapeTweets' }),
-      15000,
+      sendToTabSafe(tabId, {
+        action: 'scrapeTweets',
+        scrapeConfig: {
+          scrollWaitMs: cfg.scrapeScrollWaitMs,
+          maxRounds: cfg.scrapeMaxRounds,
+          stagnantRounds: cfg.scrapeStagnantRounds
+        }
+      }),
+      scrapeTimeoutMs,
       '采集超时，请刷新页面后重试'
     );
     if (!scrapeResp?.ok) {
@@ -1464,7 +1530,6 @@ async function startAnalysisForTab(tabId) {
       progressText: `正在分析 ${tweets.length} 条新推文${skippedCount > 0 ? `（跳过 ${skippedCount} 个已扫描）` : ''}…`
     });
 
-    const cfg = await getProviderConfig();
     const prefilter = splitObviousBotReplies(tweets, cfg.obviousBotKeywords);
     const results = prefilter.localResults.slice();
 
@@ -1578,7 +1643,7 @@ async function performDeepScan(cfg) {
     } catch (_) {}
 
     deepScanState.currentStep = '正在采集最近的帖子链接…';
-    const postUrls = await collectUserPostLinks(workerTab.id, maxPosts, handle);
+    const postUrls = await collectUserPostLinks(workerTab.id, maxPosts, handle, cfg);
     console.log(`[DeepScan] 采集到 ${postUrls.length} 条帖子链接`);
 
     if (deepScanState.cancelled) {
@@ -1615,7 +1680,7 @@ async function performDeepScan(cfg) {
         await waitForTabLoaded(workerTab.id, 12000);
       } catch (_) {}
 
-      const replies = await collectPostReplies(workerTab.id, maxRepliesPerPost);
+      const replies = await collectPostReplies(workerTab.id, maxRepliesPerPost, cfg);
       console.log(`[DeepScan] 第 ${i + 1} 条帖子采集到 ${replies.length} 条回复`);
       deepScanState.repliesCollected.push(...replies);
       deepScanState.repliesCount = deepScanState.repliesCollected.length;
@@ -1699,14 +1764,18 @@ function continueDeepScan() {
   }
 }
 
-async function collectUserPostLinks(tabId, maxLinks = 20, targetHandle = '') {
+async function collectUserPostLinks(tabId, maxLinks = 20, targetHandle = '', cfg = {}) {
   const links = [];
+  const linkSet = new Set();
+  const maxRounds = normalizeScrapeMaxRounds(cfg.scrapeMaxRounds);
+  const waitMs = normalizeScrapeScrollWaitMs(cfg.scrapeScrollWaitMs);
+  const stagnantLimit = normalizeScrapeStagnantRounds(cfg.scrapeStagnantRounds);
   let lastCount = 0;
   let stagnantRounds = 0;
   // Normalise handle for path matching: "@foo" or "foo" → "/foo/"
   const handleSlug = targetHandle.replace(/^@/, '').toLowerCase();
 
-  for (let i = 0; i < 15; i++) {
+  for (let i = 0; i < maxRounds; i++) {
     const result = await executeInTab(tabId, (slug) => {
       const posts = [];
       const articles = document.querySelectorAll('article[data-testid="tweet"]');
@@ -1729,14 +1798,18 @@ async function collectUserPostLinks(tabId, maxLinks = 20, targetHandle = '') {
       return posts;
     }, [handleSlug]).catch(() => []);
 
-    links.push(...result.filter(link => !links.includes(link)));
+    result.forEach(link => {
+      if (!linkSet.has(link)) {
+        linkSet.add(link);
+        links.push(link);
+      }
+    });
 
     if (links.length >= maxLinks) break;
 
     if (links.length <= lastCount) {
       stagnantRounds++;
-      // #2 fix: raise to 4 rounds, consistent with collectPostReplies
-      if (stagnantRounds >= 4) break;
+      if (stagnantRounds >= stagnantLimit) break;
     } else {
       stagnantRounds = 0;
     }
@@ -1746,7 +1819,8 @@ async function collectUserPostLinks(tabId, maxLinks = 20, targetHandle = '') {
       window.scrollBy({ top: Math.max(window.innerHeight * 0.9, 800), behavior: 'auto' });
       return true;
     }).catch(() => {});
-    await sleep(1400);
+    const waitNextMs = stagnantRounds > 0 ? waitMs : Math.max(600, Math.round(waitMs * 0.82));
+    await sleep(waitNextMs);
   }
 
   return links.slice(0, maxLinks);
@@ -1769,7 +1843,7 @@ async function waitForRepliesRendered(tabId, minCount = 2, timeoutMs = 15000) {
   return false;
 }
 
-async function collectPostReplies(tabId, maxReplies = 100) {
+async function collectPostReplies(tabId, maxReplies = 100, cfg = {}) {
   // Bug 4 fix: we no longer deduplicate by handle across the entire function.
   // Each scroll round deduplicates only within itself (via the in-page `seen`
   // Set), but the same user can appear in multiple rounds with different tweet
@@ -1779,19 +1853,23 @@ async function collectPostReplies(tabId, maxReplies = 100) {
   // Track unique (handle, tweetUrl) pairs so we do not add the exact same
   // tweet twice (e.g. when the same article is still visible after a scroll).
   const seenKeys = new Set();
+  const maxRounds = normalizeScrapeMaxRounds(cfg.scrapeMaxRounds);
+  const waitMs = normalizeScrapeScrollWaitMs(cfg.scrapeScrollWaitMs);
+  const stagnantLimit = normalizeScrapeStagnantRounds(cfg.scrapeStagnantRounds);
   let lastCount = 0;
   let stagnantRounds = 0;
 
   // X.com is a SPA: tab status=complete fires before React has rendered reply
   // articles. Wait until at least 2 articles are present (index 0 = original
   // tweet, index 1+ = replies) before starting the scroll loop.
-  const repliesAppeared = await waitForRepliesRendered(tabId, 2, 10000);
+  const repliesAppearTimeout = Math.max(15000, Math.round(waitMs * 8));
+  const repliesAppeared = await waitForRepliesRendered(tabId, 2, repliesAppearTimeout);
   if (!repliesAppeared) {
     console.log('[DeepScan] collectPostReplies: 等待回复节点超时，跳过此帖');
     return [];
   }
 
-  for (let i = 0; i < 12; i++) {
+  for (let i = 0; i < maxRounds; i++) {
     const result = await executeInTab(tabId, () => {
       const tweets = [];
       const articles = document.querySelectorAll('article[data-testid="tweet"]');
@@ -1870,7 +1948,7 @@ async function collectPostReplies(tabId, maxReplies = 100) {
 
     if (replies.length <= lastCount) {
       stagnantRounds++;
-      if (stagnantRounds >= 4) break;
+      if (stagnantRounds >= stagnantLimit) break;
     } else {
       stagnantRounds = 0;
     }
@@ -1880,7 +1958,8 @@ async function collectPostReplies(tabId, maxReplies = 100) {
       window.scrollBy({ top: Math.max(window.innerHeight * 0.8, 600), behavior: 'auto' });
       return true;
     }).catch(() => {});
-    await sleep(1400);
+    const waitNextMs = stagnantRounds > 0 ? waitMs : Math.max(600, Math.round(waitMs * 0.82));
+    await sleep(waitNextMs);
   }
 
   return replies.slice(0, maxReplies);

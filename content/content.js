@@ -5,8 +5,21 @@
 (() => {
   'use strict';
 
+  const DEFAULT_SCRAPE_SCROLL_WAIT_MS = 1200;
+  const DEFAULT_SCRAPE_MAX_ROUNDS = 12;
+  const DEFAULT_SCRAPE_STAGNANT_ROUNDS = 4;
+
   function sleep(ms) {
     return new Promise(resolve => setTimeout(resolve, ms));
+  }
+
+  function normalizeInt(raw, min, max, fallback) {
+    const v = Number(raw);
+    if (!Number.isFinite(v)) return fallback;
+    const n = Math.round(v);
+    if (n < min) return min;
+    if (n > max) return max;
+    return n;
   }
 
   function getThreadAuthorHandleFromUrl() {
@@ -117,7 +130,12 @@
     });
   }
 
-  async function collectTweetsWithAutoScroll(threadAuthorHandle, maxRounds = 10) {
+  async function collectTweetsWithAutoScroll(threadAuthorHandle, scrapeConfig = {}) {
+    const maxRounds = normalizeInt(scrapeConfig.maxRounds, 6, 25, DEFAULT_SCRAPE_MAX_ROUNDS);
+    const waitMs = normalizeInt(scrapeConfig.scrollWaitMs, 600, 2500, DEFAULT_SCRAPE_SCROLL_WAIT_MS);
+    const stagnantLimit = normalizeInt(scrapeConfig.stagnantRounds, 2, 8, DEFAULT_SCRAPE_STAGNANT_ROUNDS);
+    const confirmWaitMs = Math.min(2800, waitMs + 250);
+
     const merged = new Map();
     let stagnantRounds = 0;
     let lastSize = 0;
@@ -138,9 +156,9 @@
       lastHeight = currentHeight;
 
       // 需要连续 4 轮无变化才停止，避免网络延迟导致误判停滞
-      if (stagnantRounds >= 4) {
+      if (stagnantRounds >= stagnantLimit) {
         // 额外等待一次再确认，防止网络慢时漏采
-        await sleep(1600);
+        await sleep(confirmWaitMs);
         const afterWait = collectVisibleTweets(threadAuthorHandle);
         mergeTweetsIntoMap(merged, afterWait);
         if (merged.size <= lastSize && document.body.scrollHeight <= lastHeight + 10) {
@@ -153,22 +171,23 @@
       }
 
       window.scrollBy({ top: Math.max(window.innerHeight * 0.9, 800), behavior: 'auto' });
-      // 等待 X.com 懒加载渲染完成（网络慢时需要更长时间）
-      await sleep(1400);
+      // 增量采集场景下可以稍快一些，停滞时会自动回到完整等待。
+      const waitNextMs = stagnantRounds > 0 ? waitMs : Math.max(600, Math.round(waitMs * 0.82));
+      await sleep(waitNextMs);
     }
 
     // 最终再滚动一次并等待，确保末尾推文不遗漏
     window.scrollBy({ top: Math.max(window.innerHeight * 1.2, 1000), behavior: 'auto' });
-    await sleep(1600);
+    await sleep(confirmWaitMs);
     mergeTweetsIntoMap(merged, collectVisibleTweets(threadAuthorHandle));
     return Array.from(merged.values()).map(({ uniqueId, ...tweet }) => tweet);
   }
 
   // ── Tweet scraping ───────────────────────────────────────────────────────────
-  async function scrapeTweets() {
+  async function scrapeTweets(scrapeConfig = {}) {
     const threadAuthorHandle = getThreadAuthorHandleFromUrl();
     if (/\/status\/\d+/i.test(window.location.pathname)) {
-      return collectTweetsWithAutoScroll(threadAuthorHandle, 12);
+      return collectTweetsWithAutoScroll(threadAuthorHandle, scrapeConfig);
     }
     return collectVisibleTweets(threadAuthorHandle).map(({ uniqueId, ...tweet }) => tweet);
   }
@@ -178,7 +197,7 @@
     switch (msg.action) {
 
       case 'scrapeTweets': {
-        scrapeTweets()
+        scrapeTweets(msg.scrapeConfig || {})
           .then(tweets => sendResponse({ ok: true, tweets }))
           .catch(e => sendResponse({ ok: false, error: e.message }));
         return true;
