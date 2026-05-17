@@ -15,6 +15,7 @@ let candidates = [];
 let scannedTweetCount = 0;
 let analysisPollTimer = null;
 let queuePollTimer = null;
+let analysisRunning = false;
 
 function isSupportedXUrl(url) {
   try {
@@ -55,6 +56,18 @@ function stopAnalysisPolling() {
 
 function stopQueuePolling() {
   if (queuePollTimer) { clearInterval(queuePollTimer); queuePollTimer = null; }
+}
+
+function updateAnalyzeButtonState() {
+  const inlineAnalyzeBtn = document.getElementById('btn-analyze-inline');
+  if (!inlineAnalyzeBtn) return;
+
+  inlineAnalyzeBtn.disabled = !isXTab || analysisRunning;
+  if (!isXTab) {
+    inlineAnalyzeBtn.textContent = '请先切到 X 页面';
+    return;
+  }
+  inlineAnalyzeBtn.textContent = analysisRunning ? '分析中…' : '开始分析当前页面';
 }
 
 function bindClick(id, handler) {
@@ -157,13 +170,8 @@ async function init() {
   try {
     const ds = await getDeepScanStatus();
     if (ds.running || ds.completed || ds.error) {
-      // Update the inline analyze button state even if we are about to
-      // show the deep scan view (keeps the button consistent on return).
-      const inlineAnalyzeBtn = document.getElementById('btn-analyze-inline');
-      if (inlineAnalyzeBtn) {
-        inlineAnalyzeBtn.disabled = !isXTab;
-        inlineAnalyzeBtn.textContent = isXTab ? '开始分析当前页面' : '请先切到 X 页面';
-      }
+      // Update inline analyze entry even when deep-scan view is shown.
+      updateAnalyzeButtonState();
       showView('deepScanProgress');
       renderDeepScanStatus(ds);
       if (ds.running) {
@@ -177,11 +185,7 @@ async function init() {
   // Keep analysis entry visible by default unless explicitly set otherwise.
   showView(isXTab ? 'idle' : 'notX');
 
-  const inlineAnalyzeBtn = document.getElementById('btn-analyze-inline');
-  if (inlineAnalyzeBtn) {
-    inlineAnalyzeBtn.disabled = !isXTab;
-    inlineAnalyzeBtn.textContent = isXTab ? '开始分析当前页面' : '请先切到 X 页面';
-  }
+  updateAnalyzeButtonState();
 
   if (!isXTab) {
     showView('notX');
@@ -221,12 +225,16 @@ async function startAnalysis() {
   }
 
   stopAnalysisPolling();
+  analysisRunning = true;
+  updateAnalyzeButtonState();
   showView('scanning');
   setScanMsg('正在启动分析任务…');
 
   try {
     const resp = await chrome.runtime.sendMessage({ action: 'startAnalysisForTab', tabId: currentTabId });
     if (!resp?.ok) {
+      analysisRunning = false;
+      updateAnalyzeButtonState();
       if (resp?.needsConfig) {
         showNotice(resp.error || '请先配置模型服务。', true, true);
         return;
@@ -247,6 +255,8 @@ async function startAnalysis() {
       setScanMsg('正在采集推文…');
     }
   } catch (e) {
+    analysisRunning = false;
+    updateAnalyzeButtonState();
     showNotice('⚠️ 启动分析失败：' + e.message, true);
     return;
   }
@@ -283,9 +293,14 @@ function showNotice(msg, isError, showOptionsButton = false) {
 
 function applyAnalysisState(state) {
   if (!state) {
+    analysisRunning = false;
+    updateAnalyzeButtonState();
     showView(isXTab ? 'idle' : 'notX');
     return;
   }
+
+  analysisRunning = state.status === 'running';
+  updateAnalyzeButtonState();
 
   if (state.status === 'running') {
     showView('scanning');
@@ -327,6 +342,8 @@ function applyAnalysisState(state) {
     return;
   }
 
+  analysisRunning = false;
+  updateAnalyzeButtonState();
   showView(isXTab ? 'idle' : 'notX');
 }
 
@@ -337,6 +354,8 @@ function startAnalysisPolling() {
       const state = await getAnalysisState();
       if (!state) {
         stopAnalysisPolling();
+        analysisRunning = false;
+        updateAnalyzeButtonState();
         showView('idle');
         return;
       }
@@ -407,6 +426,8 @@ async function addSelectedToQueue() {
     // Close analysis result view after enqueueing; blocking continues in background queue.
     await clearAnalysisState();
     stopAnalysisPolling();
+    analysisRunning = false;
+    updateAnalyzeButtonState();
     candidates = [];
     showView(isXTab ? 'idle' : 'notX');
   } catch (e) {
@@ -594,6 +615,8 @@ bindClick('btn-confirm-block', addSelectedToQueue);
 bindClick('btn-cancel-results', () => {
   clearAnalysisState();
   stopAnalysisPolling();
+  analysisRunning = false;
+  updateAnalyzeButtonState();
   candidates = [];
   showView('idle');
 });
@@ -618,5 +641,7 @@ document.getElementById('modal-deep-scan').addEventListener('click', e => {
 
 init().catch(() => {
   // Last-resort fallback: do not block manual analysis entry.
+  analysisRunning = false;
+  updateAnalyzeButtonState();
   showView('idle');
 });
