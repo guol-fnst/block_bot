@@ -1013,6 +1013,16 @@ function shouldFallbackToChunk(error) {
   return msg.includes('context') || msg.includes('token') || msg.includes('too large') || msg.includes('413');
 }
 
+function getParallelBatchConcurrency(cfg) {
+  const provider = String(cfg?.provider || '').toLowerCase();
+  const apiType = String(cfg?.openaiApiType || '').toLowerCase();
+
+  // Keep concurrency conservative to reduce provider rate-limit spikes.
+  if (provider === 'gemini') return 2;
+  if (provider === 'anthropic' || apiType === 'anthropic') return 2;
+  return 3;
+}
+
 async function analyzeTweetsOptimized(tweets, cfg, onProgress) {
   if (!tweets || tweets.length === 0) return [];
 
@@ -1026,22 +1036,41 @@ async function analyzeTweetsOptimized(tweets, cfg, onProgress) {
 
   // For larger pages, skip the one-shot request so we do not pay for a slow
   // oversized call before falling back to chunking anyway.
-  const results = [];
+  const batches = [];
   for (let i = 0; i < tweets.length; i += BATCH_SIZE) {
-    const batch = tweets.slice(i, i + BATCH_SIZE);
-    const batchResults = await analyzeBatch(batch, cfg);
-    results.push(...batchResults);
-
-    if (onProgress) {
-      const done = Math.min(i + BATCH_SIZE, tweets.length);
-      await onProgress(done, tweets.length);
-    }
-
-    if (i + BATCH_SIZE < tweets.length) {
-      await sleep(700);
-    }
+    batches.push(tweets.slice(i, i + BATCH_SIZE));
   }
-  return results;
+
+  const total = tweets.length;
+  const parallel = Math.max(1, Math.min(getParallelBatchConcurrency(cfg), batches.length));
+  const resultsByBatch = new Array(batches.length);
+  let nextBatchIndex = 0;
+  let doneCount = 0;
+
+  const worker = async workerId => {
+    // Small stagger so all workers do not hit the provider at the exact same moment.
+    if (workerId > 0) {
+      await sleep(workerId * 120);
+    }
+
+    while (true) {
+      const batchIndex = nextBatchIndex;
+      nextBatchIndex += 1;
+      if (batchIndex >= batches.length) return;
+
+      const batch = batches[batchIndex];
+      const batchResults = await analyzeBatch(batch, cfg);
+      resultsByBatch[batchIndex] = batchResults;
+      doneCount += batch.length;
+
+      if (onProgress) {
+        await onProgress(Math.min(doneCount, total), total);
+      }
+    }
+  };
+
+  await Promise.all(Array.from({ length: parallel }, (_, i) => worker(i)));
+  return resultsByBatch.flat();
 }
 
 function compactText(text) {
