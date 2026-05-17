@@ -1462,6 +1462,22 @@ function normalizeCandidates(results, threshold = CONFIDENCE_THRESHOLD) {
   return Object.values(byHandle).sort((a, b) => b.confidence - a.confidence);
 }
 
+/**
+ * 合并两批候选结果：对同一 handle 取置信度最高的那条，最终按置信度倒序排列。
+ * 用于多次点击分析时累积所有发现的 bot，而不是每次覆盖。
+ */
+function mergeCandidateLists(existing, newOnes) {
+  const byHandle = {};
+  [...existing, ...newOnes].forEach(c => {
+    if (!c || !c.handle) return;
+    const key = String(c.handle).toLowerCase();
+    if (!byHandle[key] || Number(c.confidence || 0) > Number(byHandle[key].confidence || 0)) {
+      byHandle[key] = c;
+    }
+  });
+  return Object.values(byHandle).sort((a, b) => b.confidence - a.confidence);
+}
+
 function sendToTab(tabId, msg) {
   return new Promise((resolve, reject) => {
     chrome.tabs.sendMessage(tabId, msg, resp => {
@@ -1616,16 +1632,21 @@ async function startAnalysisForTab(tabId) {
       detectAutoReplyBots(prefilter.modelTweets, modelResults);
     }
 
-    const candidates = normalizeCandidates(results, cfg.spamConfidenceThreshold);
-    
+    const newCandidates = normalizeCandidates(results, cfg.spamConfidenceThreshold);
+
     // 将已分析的用户加到缓存（包括本地预过滤和 LLM 分析的）
     const analyzedHandles = tweets.map(t => t.handle);
     addScannedUserHandles(tabId, analyzedHandles);
-    
+
+    // 与上次分析结果合并，避免多次点击只保留最新一批结果
+    const prevState = await getAnalysisState(tabId);
+    const prevCandidates = Array.isArray(prevState?.candidates) ? prevState.candidates : [];
+    const merged = mergeCandidateLists(prevCandidates, newCandidates);
+
     await setAnalysisState(tabId, {
-      status: candidates.length > 0 ? 'done' : 'empty',
+      status: merged.length > 0 ? 'done' : 'empty',
       scannedTweetCount: allTweets.length,
-      candidates,
+      candidates: merged,
       error: '',
       progressText: ''
     });

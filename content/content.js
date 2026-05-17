@@ -152,7 +152,10 @@
 
       const currentSize = merged.size;
       const currentHeight = document.body.scrollHeight;
-      if (currentSize <= lastSize && currentHeight <= lastHeight + 10) {
+      // 只按内容数量判断停滞，不依赖页面高度：
+      // X 的虚拟滚动会在底部添加新推文的同时删除顶部旧推文，
+      // 导致 scrollHeight 几乎不变，用高度检测会过早停止。
+      if (currentSize <= lastSize) {
         stagnantRounds += 1;
       } else {
         stagnantRounds = 0;
@@ -192,10 +195,9 @@
   // ── Tweet scraping ───────────────────────────────────────────────────────────
   async function scrapeTweets(scrapeConfig = {}) {
     const threadAuthorHandle = getThreadAuthorHandleFromUrl();
-    if (/\/status\/\d+/i.test(window.location.pathname)) {
-      return collectTweetsWithAutoScroll(threadAuthorHandle, scrapeConfig);
-    }
-    return collectVisibleTweets(threadAuthorHandle).map(({ uniqueId, ...tweet }) => tweet);
+    // 所有页面都启用自动滚动采集，而不只是帖子详情页
+    // 这样在主页、博主主页、搜索结果页都能一次采集完毕
+    return collectTweetsWithAutoScroll(threadAuthorHandle, scrapeConfig);
   }
 
   // ── Message listener ─────────────────────────────────────────────────────────
