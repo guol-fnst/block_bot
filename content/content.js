@@ -131,65 +131,129 @@
     });
   }
 
-  async function collectTweetsWithAutoScroll(threadAuthorHandle, scrapeConfig = {}) {
-    const maxTweets = normalizeInt(scrapeConfig.maxTweets, 20, 5000, DEFAULT_SCRAPE_MAX_TWEETS);
-    const configuredMaxRounds = normalizeInt(scrapeConfig.maxRounds, 6, 300, DEFAULT_SCRAPE_MAX_ROUNDS);
-    const targetBasedRounds = Math.ceil(maxTweets / 6);
-    const maxRounds = Math.min(300, Math.max(configuredMaxRounds, targetBasedRounds));
-    const waitMs = normalizeInt(scrapeConfig.scrollWaitMs, 600, 2500, DEFAULT_SCRAPE_SCROLL_WAIT_MS);
-    const stagnantLimit = normalizeInt(scrapeConfig.stagnantRounds, 2, 8, DEFAULT_SCRAPE_STAGNANT_ROUNDS);
-    const confirmWaitMs = Math.min(2800, waitMs + 250);
-
-    const merged = new Map();
-    let stagnantRounds = 0;
-    let lastSize = 0;
-    let lastHeight = 0;
-
-    for (let i = 0; i < maxRounds; i++) {
-      const visible = collectVisibleTweets(threadAuthorHandle);
-      mergeTweetsIntoMap(merged, visible);
-      if (merged.size >= maxTweets) break;
-
-      const currentSize = merged.size;
-      const currentHeight = document.body.scrollHeight;
-      // 只按内容数量判断停滞，不依赖页面高度：
-      // X 的虚拟滚动会在底部添加新推文的同时删除顶部旧推文，
-      // 导致 scrollHeight 几乎不变，用高度检测会过早停止。
-      if (currentSize <= lastSize) {
-        stagnantRounds += 1;
-      } else {
-        stagnantRounds = 0;
-      }
-      lastSize = currentSize;
-      lastHeight = currentHeight;
-
-      // 需要连续 4 轮无变化才停止，避免网络延迟导致误判停滞
-      if (stagnantRounds >= stagnantLimit) {
-        // 额外等待一次再确认，防止网络慢时漏采
-        await sleep(confirmWaitMs);
-        const afterWait = collectVisibleTweets(threadAuthorHandle);
-        mergeTweetsIntoMap(merged, afterWait);
-        if (merged.size >= maxTweets) break;
-        if (merged.size <= lastSize && document.body.scrollHeight <= lastHeight + 10) {
-          break;
-        }
-        // 有新推文，重置停滞计数继续滚动
-        stagnantRounds = 0;
-        lastSize = merged.size;
-        lastHeight = document.body.scrollHeight;
-      }
-
-      window.scrollBy({ top: Math.max(window.innerHeight * 0.9, 800), behavior: 'auto' });
-      // 增量采集场景下可以稍快一些，停滞时会自动回到完整等待。
-      const waitNextMs = stagnantRounds > 0 ? waitMs : Math.max(600, Math.round(waitMs * 0.82));
-      await sleep(waitNextMs);
+  // 禁用用户交互，防止采集过程中的手动滚动导致虚拟滚动错乱
+  function disableScraping() {
+    // 保存原始样式
+    const originalBodyOverflow = document.body.style.overflow;
+    const originalHtmlOverflow = document.documentElement.style.overflow;
+    
+    // 禁用滚动
+    document.body.style.overflow = 'hidden';
+    document.documentElement.style.overflow = 'hidden';
+    
+    // 添加半透明 overlay 提示用户采集中
+    let overlay = document.getElementById('block-bot-scraping-overlay');
+    if (!overlay) {
+      overlay = document.createElement('div');
+      overlay.id = 'block-bot-scraping-overlay';
+      overlay.style.cssText = `
+        position: fixed;
+        top: 0;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        background: rgba(0, 0, 0, 0.3);
+        pointer-events: none;
+        z-index: 999999;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      `;
+      const tip = document.createElement('div');
+      tip.style.cssText = `
+        background: rgba(0, 0, 0, 0.8);
+        color: white;
+        padding: 20px 30px;
+        border-radius: 8px;
+        font-size: 14px;
+        text-align: center;
+        pointer-events: none;
+      `;
+      tip.textContent = '正在采集推文，请勿操作…';
+      overlay.appendChild(tip);
+      document.body.appendChild(overlay);
     }
+    
+    // 监听并阻止用户滚动
+    const onScroll = () => {
+      window.scrollTo(window.scrollX || 0, window.scrollY || 0);
+    };
+    window.addEventListener('scroll', onScroll, { passive: false });
+    
+    // 返回恢复函数
+    return () => {
+      window.removeEventListener('scroll', onScroll);
+      document.body.style.overflow = originalBodyOverflow;
+      document.documentElement.style.overflow = originalHtmlOverflow;
+      const o = document.getElementById('block-bot-scraping-overlay');
+      if (o) o.remove();
+    };
+  }
 
-    // 最终再滚动一次并等待，确保末尾推文不遗漏
-    window.scrollBy({ top: Math.max(window.innerHeight * 1.2, 1000), behavior: 'auto' });
-    await sleep(confirmWaitMs);
-    mergeTweetsIntoMap(merged, collectVisibleTweets(threadAuthorHandle));
-    return Array.from(merged.values()).slice(0, maxTweets).map(({ uniqueId, ...tweet }) => tweet);
+  async function collectTweetsWithAutoScroll(threadAuthorHandle, scrapeConfig = {}) {
+    const restore = disableScraping();
+    try {
+      const maxTweets = normalizeInt(scrapeConfig.maxTweets, 20, 5000, DEFAULT_SCRAPE_MAX_TWEETS);
+      const configuredMaxRounds = normalizeInt(scrapeConfig.maxRounds, 6, 300, DEFAULT_SCRAPE_MAX_ROUNDS);
+      const targetBasedRounds = Math.ceil(maxTweets / 6);
+      const maxRounds = Math.min(300, Math.max(configuredMaxRounds, targetBasedRounds));
+      const waitMs = normalizeInt(scrapeConfig.scrollWaitMs, 600, 2500, DEFAULT_SCRAPE_SCROLL_WAIT_MS);
+      const stagnantLimit = normalizeInt(scrapeConfig.stagnantRounds, 2, 8, DEFAULT_SCRAPE_STAGNANT_ROUNDS);
+      const confirmWaitMs = Math.min(2800, waitMs + 250);
+
+      const merged = new Map();
+      let stagnantRounds = 0;
+      let lastSize = 0;
+      let lastHeight = 0;
+
+      for (let i = 0; i < maxRounds; i++) {
+        const visible = collectVisibleTweets(threadAuthorHandle);
+        mergeTweetsIntoMap(merged, visible);
+        if (merged.size >= maxTweets) break;
+
+        const currentSize = merged.size;
+        const currentHeight = document.body.scrollHeight;
+        // 只按内容数量判断停滞，不依赖页面高度：
+        // X 的虚拟滚动会在底部添加新推文的同时删除顶部旧推文，
+        // 导致 scrollHeight 几乎不变，用高度检测会过早停止。
+        if (currentSize <= lastSize) {
+          stagnantRounds += 1;
+        } else {
+          stagnantRounds = 0;
+        }
+        lastSize = currentSize;
+        lastHeight = currentHeight;
+
+        // 需要连续 4 轮无变化才停止，避免网络延迟导致误判停滞
+        if (stagnantRounds >= stagnantLimit) {
+          // 额外等待一次再确认，防止网络慢时漏采
+          await sleep(confirmWaitMs);
+          const afterWait = collectVisibleTweets(threadAuthorHandle);
+          mergeTweetsIntoMap(merged, afterWait);
+          if (merged.size >= maxTweets) break;
+          if (merged.size <= lastSize && document.body.scrollHeight <= lastHeight + 10) {
+            break;
+          }
+          // 有新推文，重置停滞计数继续滚动
+          stagnantRounds = 0;
+          lastSize = merged.size;
+          lastHeight = document.body.scrollHeight;
+        }
+
+        window.scrollBy({ top: Math.max(window.innerHeight * 0.9, 800), behavior: 'auto' });
+        // 增量采集场景下可以稍快一些，停滞时会自动回到完整等待。
+        const waitNextMs = stagnantRounds > 0 ? waitMs : Math.max(600, Math.round(waitMs * 0.82));
+        await sleep(waitNextMs);
+      }
+
+      // 最终再滚动一次并等待，确保末尾推文不遗漏
+      window.scrollBy({ top: Math.max(window.innerHeight * 1.2, 1000), behavior: 'auto' });
+      await sleep(confirmWaitMs);
+      mergeTweetsIntoMap(merged, collectVisibleTweets(threadAuthorHandle));
+      return Array.from(merged.values()).slice(0, maxTweets).map(({ uniqueId, ...tweet }) => tweet);
+    } finally {
+      restore();
+    }
   }
 
   // ── Tweet scraping ───────────────────────────────────────────────────────────
