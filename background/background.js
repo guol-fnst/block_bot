@@ -429,6 +429,29 @@ async function cleanupWorkerTab() {
   blockQueue.workerTabId = null;
 }
 
+async function scrapeViaHiddenTab(url, scrapeConfig, timeoutMs) {
+  let scrapeTab = null;
+  try {
+    scrapeTab = await tabsCreate(url, false);
+    try {
+      await waitForTabLoaded(scrapeTab.id, 15000);
+    } catch (_) {
+      // 超时也可能有内容，继续
+    }
+    await ensureContentScript(scrapeTab.id);
+
+    return await withTimeout(
+      sendToTab(scrapeTab.id, { action: 'scrapeTweets', scrapeConfig }),
+      timeoutMs,
+      '采集超时，请刷新页面后重试'
+    );
+  } finally {
+    if (scrapeTab) {
+      await tabsRemove(scrapeTab.id).catch(() => {});
+    }
+  }
+}
+
 function executeInTab(tabId, fn, args) {
   return new Promise((resolve, reject) => {
     chrome.scripting.executeScript(
@@ -1540,16 +1563,17 @@ async function startAnalysisForTab(tabId) {
   try {
     // 获取 tab URL，初始化缓存
     const tab = await chrome.tabs.get(tabId).catch(() => null);
-    if (tab?.url) {
-      initPageAnalysisCache(tabId, tab.url);
+    if (!tab?.url) {
+      throw new Error('无法获取当前标签页 URL');
     }
+    initPageAnalysisCache(tabId, tab.url);
 
     await setAnalysisState(tabId, {
       status: 'running',
       scannedTweetCount: 0,
       candidates: [],
       error: '',
-      progressText: '正在采集推文…'
+      progressText: '正在打开后台页面采集推文…'
     });
 
     const cfg = await getProviderConfig();
@@ -1560,19 +1584,13 @@ async function startAnalysisForTab(tabId) {
       Math.max(15000, cfg.scrapeScrollWaitMs * effectiveScrapeRounds + 15000)
     );
 
-    const scrapeResp = await withTimeout(
-      sendToTabSafe(tabId, {
-        action: 'scrapeTweets',
-        scrapeConfig: {
-          scrollWaitMs: cfg.scrapeScrollWaitMs,
-          maxRounds: effectiveScrapeRounds,
-          maxTweets: cfg.scrapeMaxTweets,
-          stagnantRounds: cfg.scrapeStagnantRounds
-        }
-      }),
-      scrapeTimeoutMs,
-      '采集超时，请刷新页面后重试'
-    );
+    const scrapeConfig = {
+      scrollWaitMs: cfg.scrapeScrollWaitMs,
+      maxRounds: effectiveScrapeRounds,
+      maxTweets: cfg.scrapeMaxTweets,
+      stagnantRounds: cfg.scrapeStagnantRounds
+    };
+    const scrapeResp = await scrapeViaHiddenTab(tab.url, scrapeConfig, scrapeTimeoutMs);
     if (!scrapeResp?.ok) {
       throw new Error(scrapeResp?.error || '采集失败');
     }
