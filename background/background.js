@@ -429,29 +429,6 @@ async function cleanupWorkerTab() {
   blockQueue.workerTabId = null;
 }
 
-async function scrapeViaHiddenTab(url, scrapeConfig, timeoutMs) {
-  let scrapeTab = null;
-  try {
-    scrapeTab = await tabsCreate(url, false);
-    try {
-      await waitForTabLoaded(scrapeTab.id, 15000);
-    } catch (_) {
-      // 超时也可能有内容，继续
-    }
-    await ensureContentScript(scrapeTab.id);
-
-    return await withTimeout(
-      sendToTab(scrapeTab.id, { action: 'scrapeTweets', scrapeConfig }),
-      timeoutMs,
-      '采集超时，请刷新页面后重试'
-    );
-  } finally {
-    if (scrapeTab) {
-      await tabsRemove(scrapeTab.id).catch(() => {});
-    }
-  }
-}
-
 function executeInTab(tabId, fn, args) {
   return new Promise((resolve, reject) => {
     chrome.scripting.executeScript(
@@ -1573,7 +1550,7 @@ async function startAnalysisForTab(tabId) {
       scannedTweetCount: 0,
       candidates: [],
       error: '',
-      progressText: '正在打开后台页面采集推文…'
+      progressText: '正在采集推文…'
     });
 
     const cfg = await getProviderConfig();
@@ -1590,7 +1567,7 @@ async function startAnalysisForTab(tabId) {
       maxTweets: cfg.scrapeMaxTweets,
       stagnantRounds: cfg.scrapeStagnantRounds
     };
-    const scrapeResp = await scrapeViaHiddenTab(tab.url, scrapeConfig, scrapeTimeoutMs);
+    const scrapeResp = await sendToTabSafe(tabId, { action: 'scrapeTweets', scrapeConfig });
     if (!scrapeResp?.ok) {
       throw new Error(scrapeResp?.error || '采集失败');
     }
