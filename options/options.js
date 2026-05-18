@@ -44,7 +44,7 @@ const toggleGeminiBtn = document.getElementById('btn-toggle-gemini');
 const toggleOpenaiBtn = document.getElementById('btn-toggle-openai');
 
 const DEFAULT_SPAM_THRESHOLD = 0.8;
-const DEFAULT_ANALYSIS_BATCH_SIZE = 15;
+const DEFAULT_ANALYSIS_BATCH_SIZE = 25;
 const DEFAULT_ANALYSIS_PARALLELISM = 0;
 const DEFAULT_SCRAPE_SCROLL_WAIT_MS = 1200;
 const DEFAULT_SCRAPE_MAX_ROUNDS = 120;

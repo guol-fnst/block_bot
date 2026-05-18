@@ -4,13 +4,14 @@
  */
 'use strict';
 
-const DEFAULT_ANALYSIS_BATCH_SIZE = 15;
+const DEFAULT_ANALYSIS_BATCH_SIZE = 25;
 const DEFAULT_ANALYSIS_PARALLELISM = 0; // 0 = provider-based auto
 const DEFAULT_SCRAPE_SCROLL_WAIT_MS = 1200;
 const DEFAULT_SCRAPE_MAX_ROUNDS = 120;
 const DEFAULT_SCRAPE_MAX_TWEETS = 1000;
 const DEFAULT_SCRAPE_STAGNANT_ROUNDS = 4;
 const CONFIDENCE_THRESHOLD = 0.8;
+const MAX_TWEET_TEXT_LENGTH = 280;
 const ANALYSIS_KEY_PREFIX = 'analysisCache:';
 const API_RETRY_MAX_ATTEMPTS = 4;
 const API_RETRY_BASE_DELAY_MS = 800;
@@ -705,7 +706,10 @@ function buildPrompt(batch, customDetectionPrompt = '') {
       grouped.set(key, { handle: t.handle, displayName: t.displayName, texts: [] });
     }
     const entry = grouped.get(key);
-    if (t.text) entry.texts.push(t.text);
+    if (t.text) {
+      const full = String(t.text);
+      entry.texts.push(full.length > MAX_TWEET_TEXT_LENGTH ? full.slice(0, MAX_TWEET_TEXT_LENGTH) + '…' : full);
+    }
   });
 
   const tweetsJson = JSON.stringify(
@@ -1081,34 +1085,97 @@ function getParallelBatchConcurrency(cfg) {
   return 3;
 }
 
+function preClusterSimilarTweets(tweets) {
+  if (!tweets || tweets.length <= 1) {
+    return { representatives: tweets, clusterMap: {} };
+  }
+
+  const clusterMap = {}; // repHandle_lower → [memberTweets]
+  const clustered = new Set();
+  const representatives = [];
+
+  for (let i = 0; i < tweets.length; i++) {
+    const ti = tweets[i];
+    const keyI = (ti.handle || '').toLowerCase();
+    if (clustered.has(keyI)) continue;
+
+    representatives.push(ti);
+    clustered.add(keyI);
+    const textI = ti.text || (ti.texts && ti.texts[0]) || '';
+
+    for (let j = i + 1; j < tweets.length; j++) {
+      const tj = tweets[j];
+      const keyJ = (tj.handle || '').toLowerCase();
+      if (clustered.has(keyJ)) continue;
+
+      const textJ = tj.text || (tj.texts && tj.texts[0]) || '';
+      if (calcTextSimilarity(textI, textJ) > 0.85) {
+        if (!clusterMap[keyI]) clusterMap[keyI] = [];
+        clusterMap[keyI].push(tj);
+        clustered.add(keyJ);
+      }
+    }
+  }
+
+  const clusterCount = Object.values(clusterMap).reduce((s, a) => s + a.length, 0);
+  if (clusterCount > 0) {
+    console.log(`[PreCluster] 预聚类缩减: ${tweets.length} → ${representatives.length} (${clusterCount} 聚类成员)`);
+  }
+  return { representatives, clusterMap };
+}
+
+function expandClusterResults(aiResults, clusterMap) {
+  if (!clusterMap || Object.keys(clusterMap).length === 0) return aiResults || [];
+
+  const expanded = [...(aiResults || [])];
+  (aiResults || []).forEach(r => {
+    const key = (r.handle || '').toLowerCase();
+    const members = clusterMap[key];
+    if (members) {
+      members.forEach(m => {
+        expanded.push({
+          ...r,
+          handle: m.handle,
+          displayName: m.displayName || r.displayName,
+          reason: (r.reason || '') + ' | 复制粘贴聚类成员',
+          evidenceTweet: m.text || r.evidenceTweet || ''
+        });
+      });
+    }
+  });
+
+  console.log(`[PreCluster] 结果展开: ${(aiResults || []).length} → ${expanded.length}`);
+  return expanded;
+}
+
 async function analyzeTweetsOptimized(tweets, cfg, onProgress) {
   if (!tweets || tweets.length === 0) return [];
 
+  // 预聚类：相似度 >85% 的推文只发一条代表到 AI
+  const { representatives, clusterMap } = preClusterSimilarTweets(tweets);
+
   const batchSize = normalizeAnalysisBatchSize(cfg?.analysisBatchSize);
 
-  if (tweets.length <= batchSize) {
-    const all = await analyzeBatch(tweets, cfg);
+  if (representatives.length <= batchSize) {
+    const all = await analyzeBatch(representatives, cfg);
     if (onProgress) {
-      await onProgress(tweets.length, tweets.length);
+      await onProgress(representatives.length, representatives.length);
     }
-    return all;
+    return expandClusterResults(all, clusterMap);
   }
 
-  // For larger pages, skip the one-shot request so we do not pay for a slow
-  // oversized call before falling back to chunking anyway.
   const batches = [];
-  for (let i = 0; i < tweets.length; i += batchSize) {
-    batches.push(tweets.slice(i, i + batchSize));
+  for (let i = 0; i < representatives.length; i += batchSize) {
+    batches.push(representatives.slice(i, i + batchSize));
   }
 
-  const total = tweets.length;
+  const total = representatives.length;
   const parallel = Math.max(1, Math.min(getParallelBatchConcurrency(cfg), batches.length));
   const resultsByBatch = new Array(batches.length);
   let nextBatchIndex = 0;
   let doneCount = 0;
 
   const worker = async workerId => {
-    // Small stagger so all workers do not hit the provider at the exact same moment.
     if (workerId > 0) {
       await sleep(workerId * 120);
     }
@@ -1130,7 +1197,7 @@ async function analyzeTweetsOptimized(tweets, cfg, onProgress) {
   };
 
   await Promise.all(Array.from({ length: parallel }, (_, i) => worker(i)));
-  return resultsByBatch.flat();
+  return expandClusterResults(resultsByBatch.flat(), clusterMap);
 }
 
 function compactText(text) {
@@ -1155,6 +1222,13 @@ const BUILT_IN_OBVIOUS_BOT_KEYWORDS = [
   '免费',
   '破处',
   '男大',
+  '搭子',
+  '弟弟',
+  '哥哥',
+  '嫂',
+  'sao货',
+  '能打',
+  '固炮',
   '上门',
   '外围',
   '裸聊',
@@ -1365,16 +1439,27 @@ function calcTextSimilarity(text1, text2) {
   const s1 = String(text1).trim().toLowerCase();
   const s2 = String(text2).trim().toLowerCase();
   if (s1 === s2) return 1;
-  
-  // Extract "significant words" - ignore single chars and common words
-  const words1 = s1.match(/\w{3,}/g) || [];
-  const words2 = s2.match(/\w{3,}/g) || [];
-  if (words1.length === 0 || words2.length === 0) return 0;
-  
-  const common = new Set(words1).size === 0 ? 0 :
-    words1.filter(w => words2.includes(w)).length;
-  const totalWords = Math.max(words1.length, words2.length);
-  return common / totalWords;
+
+  // 使用二元组（bigram）匹配：同时支持中文字符和拉丁单词
+  // 中文：提取 CJK 字符序列的相邻字符对（bigram）
+  // 拉丁：提取 3+ 字符的单词
+  function tokenize(s) {
+    const cjkChars = s.match(/[\u4e00-\u9fff\u3400-\u4dbf\uf900-\ufaff]/g) || [];
+    const bigrams = [];
+    for (let i = 0; i < cjkChars.length - 1; i++) {
+      bigrams.push(cjkChars[i] + cjkChars[i + 1]);
+    }
+    const latin = s.match(/\w{3,}/g) || [];
+    return [...bigrams, ...latin];
+  }
+
+  const tokens1 = tokenize(s1);
+  const tokens2 = tokenize(s2);
+  if (tokens1.length === 0 || tokens2.length === 0) return 0;
+
+  const set2 = new Set(tokens2);
+  const common = tokens1.filter(t => set2.has(t)).length;
+  return common / Math.max(tokens1.length, tokens2.length);
 }
 
 // Detect copy-paste/auto-reply patterns: accounts with near-identical messages
