@@ -131,17 +131,10 @@
     });
   }
 
-  // 禁用用户交互，防止采集过程中的手动滚动导致虚拟滚动错乱
+  // 禁用用户交互，防止采集过程中的手动操作干扰虚拟滚动
+  // 但允许页面内容异步加载（无限滚动继续工作）
   function disableScraping() {
-    // 保存原始样式
-    const originalBodyOverflow = document.body.style.overflow;
-    const originalHtmlOverflow = document.documentElement.style.overflow;
-    
-    // 禁用滚动
-    document.body.style.overflow = 'hidden';
-    document.documentElement.style.overflow = 'hidden';
-    
-    // 添加半透明 overlay 提示用户采集中
+    // 添加半透明 overlay + 禁用 pointer-events，阻止用户点击但允许内容加载
     let overlay = document.getElementById('block-bot-scraping-overlay');
     if (!overlay) {
       overlay = document.createElement('div');
@@ -153,7 +146,6 @@
         right: 0;
         bottom: 0;
         background: rgba(0, 0, 0, 0.3);
-        pointer-events: none;
         z-index: 999999;
         display: flex;
         align-items: center;
@@ -172,21 +164,29 @@
       tip.textContent = '正在采集推文，请勿操作…';
       overlay.appendChild(tip);
       document.body.appendChild(overlay);
+    } else {
+      overlay.style.display = 'flex';
     }
     
-    // 监听并阻止用户滚动
-    const onScroll = () => {
-      window.scrollTo(window.scrollX || 0, window.scrollY || 0);
+    // 阻止用户点击、键盘输入等交互，但允许滚动和内容加载
+    const preventInteraction = (e) => {
+      if (e.type !== 'scroll' && e.type !== 'wheel') {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+      }
     };
-    window.addEventListener('scroll', onScroll, { passive: false });
+    
+    ['click', 'mousedown', 'mouseup', 'keydown', 'keyup', 'keypress', 'input', 'change'].forEach(evt => {
+      document.addEventListener(evt, preventInteraction, { capture: true });
+    });
     
     // 返回恢复函数
     return () => {
-      window.removeEventListener('scroll', onScroll);
-      document.body.style.overflow = originalBodyOverflow;
-      document.documentElement.style.overflow = originalHtmlOverflow;
+      ['click', 'mousedown', 'mouseup', 'keydown', 'keyup', 'keypress', 'input', 'change'].forEach(evt => {
+        document.removeEventListener(evt, preventInteraction, { capture: true });
+      });
       const o = document.getElementById('block-bot-scraping-overlay');
-      if (o) o.remove();
+      if (o) o.style.display = 'none';
     };
   }
 
