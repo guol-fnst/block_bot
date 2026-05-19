@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Block Bot",
-  "version": "0.3.0",
+  "version": "0.2.0",
   "description": "Detect likely spam or bot accounts on X, then perform user-confirmed local blocking with rate limits.",
   "permissions": ["storage", "tabs", "scripting"],
   "host_permissions": [

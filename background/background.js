@@ -21,7 +21,6 @@ const API_FETCH_TIMEOUT_MS = 30000;
 const PERSIST_BLOCK_QUEUE_KEY = 'blockQueueState';
 const PERSIST_DEEP_SCAN_KEY  = 'deepScanPersist';
 const CIRCUIT_BREAKER_THRESHOLD = 5;
-const MAX_TURBO_CONCURRENT = 2;
 
 const GEMINI_MODELS = [
   'gemini-3.1-flash-lite',
@@ -51,12 +50,6 @@ const blockQueue = {
   log: [],
   errorMsg: '',
   workerTabId: null
-};
-
-// 急速模式任务池：每个 job 对应一个后台采集+分析 tab
-const turboPool = {
-  jobs: [],   // { id, url, status:'running'|'done'|'failed', found, enqueued, progressText, error, tabId }
-  nextId: 1
 };
 
 // Deep Scan State
@@ -1632,10 +1625,9 @@ async function startAnalysisForTab(tabId) {
   try {
     // 获取 tab URL，初始化缓存
     const tab = await chrome.tabs.get(tabId).catch(() => null);
-    if (!tab?.url) {
-      throw new Error('无法获取当前标签页 URL');
+    if (tab?.url) {
+      initPageAnalysisCache(tabId, tab.url);
     }
-    initPageAnalysisCache(tabId, tab.url);
 
     await setAnalysisState(tabId, {
       status: 'running',
@@ -1653,13 +1645,19 @@ async function startAnalysisForTab(tabId) {
       Math.max(15000, cfg.scrapeScrollWaitMs * effectiveScrapeRounds + 15000)
     );
 
-    const scrapeConfig = {
-      scrollWaitMs: cfg.scrapeScrollWaitMs,
-      maxRounds: effectiveScrapeRounds,
-      maxTweets: cfg.scrapeMaxTweets,
-      stagnantRounds: cfg.scrapeStagnantRounds
-    };
-    const scrapeResp = await sendToTabSafe(tabId, { action: 'scrapeTweets', scrapeConfig });
+    const scrapeResp = await withTimeout(
+      sendToTabSafe(tabId, {
+        action: 'scrapeTweets',
+        scrapeConfig: {
+          scrollWaitMs: cfg.scrapeScrollWaitMs,
+          maxRounds: effectiveScrapeRounds,
+          maxTweets: cfg.scrapeMaxTweets,
+          stagnantRounds: cfg.scrapeStagnantRounds
+        }
+      }),
+      scrapeTimeoutMs,
+      '采集超时，请刷新页面后重试'
+    );
     if (!scrapeResp?.ok) {
       throw new Error(scrapeResp?.error || '采集失败');
     }
@@ -2140,194 +2138,6 @@ async function collectPostReplies(tabId, maxReplies = 100, cfg = {}) {
   return replies.slice(0, maxReplies);
 }
 
-// ── 急速模式（Turbo Mode）────────────────────────────────────────────────────
-
-function getTurboStatusSnapshot() {
-  const running = turboPool.jobs.filter(j => j.status === 'running');
-  const finished = turboPool.jobs.filter(j => j.status !== 'running');
-  // Show at most 3 jobs total (prioritize running, then recent completed)
-  const visible = running.slice(0, 3).concat(finished.slice(-Math.max(0, 3 - running.length)));
-  return {
-    jobs: visible.map(j => ({
-      id: j.id,
-      url: j.url,
-      status: j.status,
-      found: j.found,
-      enqueued: j.enqueued,
-      progressText: j.progressText,
-      error: j.error
-    })),
-    runningCount: running.length,
-    maxConcurrent: MAX_TURBO_CONCURRENT
-  };
-}
-
-async function runTurboJob(job) {
-  let turboTabId = null;
-
-  async function warmupTurboTabAndReturn(holdMs = 1000) {
-    try {
-      await tabsUpdate(turboTabId, { active: true });
-      await sleep(holdMs);
-    } finally {
-      if (job.sourceTabId) {
-        await tabsUpdate(job.sourceTabId, { active: true }).catch(() => {});
-      }
-    }
-  }
-
-  async function scrapeWithConfig(scrapeConfig) {
-    const scrapeResp = await sendToTabSafe(turboTabId, { action: 'scrapeTweets', scrapeConfig });
-    if (!scrapeResp?.ok) {
-      throw new Error(scrapeResp?.error || '采集失败');
-    }
-    return scrapeResp.tweets || [];
-  }
-
-  try {
-    job.progressText = '正在打开页面…';
-
-    const tab = await tabsCreate(job.url, false);
-    turboTabId = tab.id;
-    job.tabId = turboTabId;
-
-    try {
-      await waitForTabLoaded(turboTabId, 18000);
-    } catch (_) {
-      // Continue even if timeout; content may still be available.
-    }
-
-    const cfg = await getProviderConfig();
-    const targetRounds = Math.ceil(cfg.scrapeMaxTweets / 6);
-    const effectiveScrapeRounds = Math.min(300, Math.max(cfg.scrapeMaxRounds, targetRounds));
-
-    // 快速检查：初步采集，如果有足够内容则立刻切回
-    // 使用2轮快速滚动 + 较长等待，确保采集充分但仍保持快速
-    const quickCheckConfig = {
-      scrollWaitMs: cfg.scrapeScrollWaitMs,
-      maxRounds: 2,
-      maxTweets: 25,
-      stagnantRounds: cfg.scrapeStagnantRounds
-    };
-
-    // 完整采集配置（若快速检查采集不足才使用）
-    const fullScrapeConfig = {
-      scrollWaitMs: cfg.scrapeScrollWaitMs,
-      maxRounds: effectiveScrapeRounds,
-      maxTweets: cfg.scrapeMaxTweets,
-      stagnantRounds: cfg.scrapeStagnantRounds
-    };
-
-    // Root-cause fix: X 在后台未激活 tab 下常出现虚拟列表不渲染，导致采集 0 条。
-    // 激活 turbo tab，快速检测内容。若采集充分，立刻切回源 tab，最小化用户打扰。
-    // 若采集不足，才进行完整采集。
-    let allTweets = [];
-    try {
-      await tabsUpdate(turboTabId, { active: true });
-      // 充足等待，让首屏和后续内容渲染
-      await sleep(1100);
-
-      // 快速检查：2轮采集，目标25条推文
-      job.progressText = '快速检测中…';
-      allTweets = await scrapeWithConfig(quickCheckConfig);
-
-      // 若快速检查采集充分，立刻切回，不用再等
-      if (allTweets.length >= 15) {
-        // 采集充分，直接准备切回（后面的finally会处理）
-        job.progressText = `检测到 ${allTweets.length} 条推文…`;
-      } else {
-        // 采集不足，进行完整采集
-        job.progressText = `仅采得 ${allTweets.length} 条，继续完整采集…`;
-        await sleep(1500);
-        window.scrollBy({ top: 500, behavior: 'auto' });
-        await sleep(600);
-        job.progressText = '完整采集中…';
-        const fullTweets = await scrapeWithConfig(fullScrapeConfig);
-        allTweets = fullTweets;
-      }
-    } finally {
-      // 采集完毕后切回源 tab
-      if (job.sourceTabId) {
-        await tabsUpdate(job.sourceTabId, { active: true }).catch(() => {});
-      }
-    }
-
-    if (allTweets.length === 0) {
-      job.progressText = '页面无推文';
-      job.status = 'done';
-      return;
-    }
-
-    job.progressText = `已采集 ${allTweets.length} 条推文，正在 AI 分析…`;
-
-    const prefilter = splitObviousBotReplies(allTweets, cfg.obviousBotKeywords);
-    const results = prefilter.localResults.slice();
-
-    if (prefilter.modelTweets.length > 0) {
-      const modelResults = await analyzeTweetsOptimized(prefilter.modelTweets, cfg, async (done, total) => {
-        job.progressText = `已采集 ${allTweets.length} 条；AI 分析 ${done}/${total}…`;
-      });
-      results.push(...modelResults);
-      detectAutoReplyBots(prefilter.modelTweets, modelResults);
-    }
-
-    const candidates = normalizeCandidates(results, cfg.spamConfidenceThreshold);
-    job.found = candidates.length;
-
-    if (candidates.length > 0) {
-      const added = enqueueBlockAccounts(candidates);
-      job.enqueued = added;
-      runGlobalBlockQueue();
-    }
-
-    job.progressText = `完成：发现 ${job.found} 个疑似账号，已加入屏蔽队列 ${job.enqueued} 个`;
-    job.status = 'done';
-  } catch (e) {
-    job.status = 'failed';
-    job.error = e.message || '急速分析失败';
-    job.progressText = '';
-  } finally {
-    // 关闭后台采集 tab
-    if (turboTabId) {
-      try { await tabsRemove(turboTabId); } catch (_) {}
-      job.tabId = null;
-    }
-  }
-}
-
-async function startTurboAnalysisForUrl(url, sourceTabId = null) {
-  const runningCount = turboPool.jobs.filter(j => j.status === 'running').length;
-  if (runningCount >= MAX_TURBO_CONCURRENT) {
-    throw new Error(`已有 ${runningCount} 个急速分析任务在运行，达到并发上限（${MAX_TURBO_CONCURRENT}）。请稍候再试。`);
-  }
-
-  const jobId = turboPool.nextId++;
-  const job = {
-    id: jobId,
-    url,
-    sourceTabId: Number.isInteger(sourceTabId) ? sourceTabId : null,
-    status: 'running',
-    found: 0,
-    enqueued: 0,
-    progressText: '正在启动…',
-    error: '',
-    tabId: null
-  };
-  turboPool.jobs.push(job);
-
-  // 只保留最近 30 条记录（已完成的最多保留 20 条）
-  if (turboPool.jobs.length > 30) {
-    const running = turboPool.jobs.filter(j => j.status === 'running');
-    const done = turboPool.jobs.filter(j => j.status !== 'running').slice(-20);
-    turboPool.jobs = running.concat(done);
-  }
-
-  // 异步执行（fire-and-forget）
-  runTurboJob(job).catch(() => {});
-
-  return { jobId, status: getTurboStatusSnapshot() };
-}
-
 // ── Tab 事件监听：页面分析缓存管理 ────────────────────────────────────────────
 /**
  * 监听 tab URL 变化，清空旧缓存
@@ -2548,28 +2358,6 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     deepScanState.cancelled = true;
     deepScanState.running = false;
     sendResponse({ ok: true });
-    return false;
-  }
-
-  if (msg.action === 'startTurboAnalysis') {
-    getProviderConfig()
-      .then(cfg => {
-        const issue = getProviderConfigIssue(cfg);
-        if (issue) {
-          sendResponse({ ok: false, needsConfig: true, error: issue });
-          return null;
-        }
-        return startTurboAnalysisForUrl(msg.url, msg.sourceTabId);
-      })
-      .then(result => {
-        if (result) sendResponse({ ok: true, ...result });
-      })
-      .catch(e => sendResponse({ ok: false, error: e.message }));
-    return true;
-  }
-
-  if (msg.action === 'getTurboStatus') {
-    sendResponse({ ok: true, status: getTurboStatusSnapshot() });
     return false;
   }
 });

@@ -15,7 +15,6 @@ let candidates = [];
 let scannedTweetCount = 0;
 let analysisPollTimer = null;
 let queuePollTimer = null;
-let turboPollTimer = null;
 let analysisRunning = false;
 
 function isSupportedXUrl(url) {
@@ -59,134 +58,16 @@ function stopQueuePolling() {
   if (queuePollTimer) { clearInterval(queuePollTimer); queuePollTimer = null; }
 }
 
-function stopTurboPolling() {
-  if (turboPollTimer) { clearInterval(turboPollTimer); turboPollTimer = null; }
-}
-
-async function getTurboStatus() {
-  const resp = await chrome.runtime.sendMessage({ action: 'getTurboStatus' });
-  if (!resp?.ok) throw new Error(resp?.error || '读取急速任务状态失败');
-  return resp.status;
-}
-
-function formatTurboJobUrl(url) {
-  try {
-    const u = new URL(String(url || ''));
-    const host = (u.hostname || '').replace(/^www\./i, '');
-    const path = u.pathname || '/';
-    const statusMatch = path.match(/\/status\/(\d+)/i);
-    if (statusMatch && statusMatch[1]) {
-      const prefix = path.split('/status/')[0] || '';
-      return `${host}${prefix}/status/${statusMatch[1]}`;
-    }
-    return `${host}${path}`;
-  } catch (_) {
-    return String(url || '').replace(/^https?:\/\/(www\.)?/i, '');
-  }
-}
-
-function renderTurboStatus(s) {
-  const panel = document.getElementById('turbo-status-panel');
-  const list = document.getElementById('turbo-job-list');
-  if (!panel || !list) return;
-
-  const jobs = s?.jobs || [];
-  if (jobs.length === 0) {
-    panel.classList.add('hidden');
-    return;
-  }
-
-  panel.classList.remove('hidden');
-  list.innerHTML = '';
-
-  jobs.slice().reverse().forEach(job => {
-    const li = document.createElement('li');
-    let icon, text;
-    if (job.status === 'running') {
-      icon = '⚡';
-      text = job.progressText || '处理中…';
-    } else if (job.status === 'done') {
-      icon = '✓';
-      text = job.progressText || `完成：${job.found} 个疑似账号`;
-    } else {
-      icon = '✗';
-      text = job.error || '急速分析失败';
-    }
-    const displayUrl = formatTurboJobUrl(job.url || '');
-    li.innerHTML =
-      `<span class="tj-icon">${icon}</span>` +
-      `<span class="tj-text" title="${escapeHtml(job.url || '')}">[${escapeHtml(displayUrl)}] ${escapeHtml(text)}</span>`;
-    list.appendChild(li);
-  });
-}
-
-async function refreshTurboStatus() {
-  try {
-    const s = await getTurboStatus();
-    renderTurboStatus(s);
-    // Stop polling when no running jobs remain
-    if ((s?.runningCount || 0) === 0) {
-      stopTurboPolling();
-    }
-  } catch (_) {}
-}
-
-function startTurboPolling() {
-  stopTurboPolling();
-  refreshTurboStatus();
-  turboPollTimer = setInterval(refreshTurboStatus, 1200);
-}
-
-async function startTurboAnalysis() {
-  if (!isXTab || !currentTabId) {
-    showNotice('当前标签页不是 X 站点页面，请先切到 x.com 页面。', true);
-    return;
-  }
-
-  const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
-  const url = tabs[0]?.url;
-  if (!url) return;
-
-  const btn = document.getElementById('btn-turbo-analyze');
-  if (btn) { btn.disabled = true; }
-
-  try {
-    const resp = await chrome.runtime.sendMessage({
-      action: 'startTurboAnalysis',
-      url,
-      sourceTabId: tabs[0]?.id || null
-    });
-    if (!resp?.ok) {
-      if (resp?.needsConfig) {
-        showNotice(resp.error || '请先配置模型服务。', true, true);
-        return;
-      }
-      throw new Error(resp?.error || '启动急速分析失败');
-    }
-    if (resp.status) renderTurboStatus(resp.status);
-    startTurboPolling();
-  } catch (e) {
-    showNotice('⚠️ 急速分析启动失败：' + e.message, true);
-  } finally {
-    if (btn) { btn.disabled = false; }
-  }
-}
-
 function updateAnalyzeButtonState() {
   const inlineAnalyzeBtn = document.getElementById('btn-analyze-inline');
-  const turboBtn = document.getElementById('btn-turbo-analyze');
   if (!inlineAnalyzeBtn) return;
 
   inlineAnalyzeBtn.disabled = !isXTab || analysisRunning;
   if (!isXTab) {
     inlineAnalyzeBtn.textContent = '请先切到 X 页面';
-  } else {
-    inlineAnalyzeBtn.textContent = analysisRunning ? '分析中…' : '开始分析当前页面';
+    return;
   }
-
-  if (turboBtn) {
-    turboBtn.disabled = !isXTab;
-  }
+  inlineAnalyzeBtn.textContent = analysisRunning ? '分析中…' : '开始分析当前页面';
 }
 
 function bindClick(id, handler) {
@@ -224,35 +105,39 @@ function renderQueueStatus(s) {
   const msgEl = document.getElementById('queue-msg');
   const detailEl = document.getElementById('queue-detail');
   const bar = document.getElementById('queue-progress-bar');
+  const logEl = document.getElementById('queue-log');
   const pauseBtn = document.getElementById('btn-queue-pause');
   const resumeBtn = document.getElementById('btn-queue-resume');
   const retryFailedBtn = document.getElementById('btn-queue-retry-failed');
-  const deepScanBtn = document.getElementById('btn-queue-clear-done');
+  const clearDoneBtn = document.getElementById('btn-queue-clear-done');
 
   const pending = (s.queue || []).filter(i => i.status === 'pending').length;
   const failed = Number(s.failed || 0);
   const done = Number(s.done || 0);
-  if (s.running || s.paused) {
-    const stateText = s.paused ? '已暂停' : '进行中';
-    msgEl.textContent = `屏蔽任务：${stateText}（待处理 ${pending}）`;
-    const runningDetail = s.current ? `当前：${s.current}` : '当前：准备中…';
-    detailEl.textContent = s.errorMsg ? `${runningDetail} ｜ ${s.errorMsg}` : runningDetail;
-  } else if (s.total > 0) {
-    msgEl.textContent = '屏蔽任务：最终结果';
-    const resultDetail = `成功 ${done} ｜ 失败 ${failed} ｜ 总计 ${s.total}`;
-    detailEl.textContent = s.errorMsg ? `${resultDetail} ｜ ${s.errorMsg}` : resultDetail;
-  } else {
-    msgEl.textContent = '屏蔽任务：空闲';
-    detailEl.textContent = '';
-  }
+  const runningText = s.paused ? '已暂停' : (s.running ? '运行中' : '空闲');
+  msgEl.textContent = `屏蔽任务：${runningText}（待处理 ${pending}）`;
+  const baseDetail = s.current
+    ? `当前：${s.current} ｜ 成功 ${s.done} ｜ 失败 ${s.failed}`
+    : `成功 ${s.done} ｜ 失败 ${s.failed} ｜ 总计 ${s.total}`;
+  detailEl.textContent = s.errorMsg ? `${baseDetail} ｜ ${s.errorMsg}` : baseDetail;
 
   const pct = s.total > 0 ? ((s.done + s.failed) / s.total) * 100 : 0;
   bar.style.width = `${Math.max(0, Math.min(100, pct))}%`;
 
+  logEl.innerHTML = '';
+  (s.log || []).slice(-8).reverse().forEach(entry => {
+    const li = document.createElement('li');
+    li.className = `log-item log-${entry.status}`;
+    li.textContent = entry.status === 'done'
+      ? `✓ ${entry.handle}`
+      : `✗ ${entry.handle}：${entry.error || '失败'}`;
+    logEl.appendChild(li);
+  });
+
   pauseBtn.disabled = !s.running || s.paused;
   resumeBtn.disabled = !s.paused || pending === 0;
   retryFailedBtn.disabled = s.running || failed === 0;
-  if (deepScanBtn) deepScanBtn.disabled = false;
+  clearDoneBtn.disabled = s.running || done === 0;
 }
 
 async function refreshQueueStatus() {
@@ -276,15 +161,6 @@ async function init() {
   isXTab = Boolean(tab && isSupportedXUrl(tab.url));
 
   startQueuePolling();
-
-  // Resume turbo polling if jobs were running before popup was closed
-  try {
-    const ts = await getTurboStatus();
-    renderTurboStatus(ts);
-    if ((ts?.runningCount || 0) > 0) {
-      startTurboPolling();
-    }
-  } catch (_) {}
 
   // ── Deep Scan recovery ────────────────────────────────────────────────────
   // Deep Scan runs in the background service worker and is independent of
@@ -702,8 +578,9 @@ async function retryFailedQueue() {
   refreshQueueStatus();
 }
 
-async function openDeepScanFromQueueAction() {
-  openDeepScanModal();
+async function clearDoneQueue() {
+  await chrome.runtime.sendMessage({ action: 'clearDoneGlobalBlocking' });
+  refreshQueueStatus();
 }
 
 bindClick('btn-options', () => {
@@ -715,7 +592,6 @@ bindClick('btn-open-options-from-notice', () => {
 
 bindClick('btn-analyze', startAnalysis);
 bindClick('btn-analyze-inline', startAnalysis);
-bindClick('btn-turbo-analyze', startTurboAnalysis);
 
 bindClick('btn-retry', retryAnalysis);
 
@@ -748,9 +624,10 @@ bindClick('btn-cancel-results', () => {
 bindClick('btn-queue-pause', pauseQueue);
 bindClick('btn-queue-resume', resumeQueue);
 bindClick('btn-queue-retry-failed', retryFailedQueue);
-bindClick('btn-queue-clear-done', openDeepScanFromQueueAction);
+bindClick('btn-queue-clear-done', clearDoneQueue);
 
 // Deep Scan bindings
+bindClick('btn-deep-scan', openDeepScanModal);
 bindClick('modal-close-deep-scan', closeDeepScanModal);
 bindClick('btn-modal-cancel', closeDeepScanModal);
 bindClick('btn-modal-start-deep-scan', startDeepScan);
