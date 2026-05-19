@@ -47,14 +47,29 @@
     return !reserved.has(slug.toLowerCase());
   }
 
+  function extractStatusPathFromArticle(article) {
+    const timeEl = article.querySelector('time');
+    const statusA = timeEl ? timeEl.closest('a') : null;
+    const directPath = statusA ? statusA.getAttribute('href') || '' : '';
+    if (/\/status\/\d+/i.test(directPath)) {
+      return directPath;
+    }
+
+    const anyStatusAnchor = article.querySelector('a[href*="/status/"]');
+    const fallbackPath = anyStatusAnchor ? anyStatusAnchor.getAttribute('href') || '' : '';
+    return /\/status\/\d+/i.test(fallbackPath) ? fallbackPath : '';
+  }
+
   function parseTweetFromArticle(article, threadAuthorHandle) {
     // 改善1: 过滤广告推文（Promoted Tweets），避免误判广告主账号
     if (article.querySelector('[data-testid="placementTracking"]')) return null;
 
     const userNameBlock = article.querySelector('[data-testid="User-Name"]');
-    if (!userNameBlock) return null;
+    const statusPath = extractStatusPathFromArticle(article);
 
-    const profileAnchors = userNameBlock.querySelectorAll('a[href^="/"]');
+    const profileAnchors = userNameBlock
+      ? userNameBlock.querySelectorAll('a[href^="/"]')
+      : [];
     let handleSlug = '';
     for (const a of profileAnchors) {
       const rawPath = a.getAttribute('href') || '';
@@ -64,28 +79,37 @@
         break;
       }
     }
+
+    // Fallback: 当用户信息块缺失或 handle 链接结构变化时，从状态链接里提取 handle。
+    if (!handleSlug && statusPath) {
+      const m = statusPath.match(/^\/([^/]+)\/status\/\d+/i);
+      const slug = m && m[1] ? decodeURIComponent(m[1]) : '';
+      if (isLikelyHandleSlug(slug)) {
+        handleSlug = slug;
+      }
+    }
+
     if (!handleSlug) return null;
 
     const handle = `@${handleSlug}`;
     if (threadAuthorHandle && handle.toLowerCase() === threadAuthorHandle) return null;
 
     let displayName = '';
-    const spans = userNameBlock.querySelectorAll('span');
-    for (const s of spans) {
-      // #4 fix: 使用 innerText 正确提取含 emoji 图片子节点的显示名
-      const t = (s.innerText || s.textContent).trim();
-      if (t && !t.startsWith('@')) {
-        displayName = t;
-        break;
+    if (userNameBlock) {
+      const spans = userNameBlock.querySelectorAll('span');
+      for (const s of spans) {
+        // #4 fix: 使用 innerText 正确提取含 emoji 图片子节点的显示名
+        const t = (s.innerText || s.textContent).trim();
+        if (t && !t.startsWith('@')) {
+          displayName = t;
+          break;
+        }
       }
     }
 
     const textEl = article.querySelector('[data-testid="tweetText"]');
     const text = textEl ? textEl.innerText.trim() : '';
 
-    const timeEl = article.querySelector('time');
-    const statusA = timeEl ? timeEl.closest('a') : null;
-    const statusPath = statusA ? statusA.getAttribute('href') || '' : '';
     const tweetUrl = statusPath ? `https://x.com${statusPath}` : '';
     const tweetIdMatch = statusPath.match(/\/status\/(\d+)/);
     const tweetId = tweetIdMatch ? tweetIdMatch[1] : '';
@@ -190,6 +214,16 @@
     };
   }
 
+  async function waitForInitialTweetNodes(timeoutMs = 9000) {
+    const started = Date.now();
+    while (Date.now() - started < timeoutMs) {
+      const count = document.querySelectorAll('article[data-testid="tweet"]').length;
+      if (count > 0) return true;
+      await sleep(220);
+    }
+    return false;
+  }
+
   async function collectTweetsWithAutoScroll(threadAuthorHandle, scrapeConfig = {}) {
     // 无论普通模式还是急速模式，都显示采集遮罩。
     const restore = disableScraping();
@@ -260,6 +294,8 @@
   // ── Tweet scraping ───────────────────────────────────────────────────────────
   async function scrapeTweets(scrapeConfig = {}) {
     const threadAuthorHandle = getThreadAuthorHandleFromUrl();
+    const initialWaitMs = normalizeInt(scrapeConfig.initialWaitMs, 1500, 15000, 9000);
+    await waitForInitialTweetNodes(initialWaitMs);
     // 所有页面都启用自动滚动采集，而不只是帖子详情页
     // 这样在主页、博主主页、搜索结果页都能一次采集完毕
     return collectTweetsWithAutoScroll(threadAuthorHandle, scrapeConfig);

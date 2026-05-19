@@ -2164,6 +2164,26 @@ function getTurboStatusSnapshot() {
 
 async function runTurboJob(job) {
   let turboTabId = null;
+
+  async function warmupTurboTabAndReturn(holdMs = 1000) {
+    try {
+      await tabsUpdate(turboTabId, { active: true });
+      await sleep(holdMs);
+    } finally {
+      if (job.sourceTabId) {
+        await tabsUpdate(job.sourceTabId, { active: true }).catch(() => {});
+      }
+    }
+  }
+
+  async function scrapeWithConfig(scrapeConfig) {
+    const scrapeResp = await sendToTabSafe(turboTabId, { action: 'scrapeTweets', scrapeConfig });
+    if (!scrapeResp?.ok) {
+      throw new Error(scrapeResp?.error || '采集失败');
+    }
+    return scrapeResp.tweets || [];
+  }
+
   try {
     job.progressText = '正在打开页面…';
 
@@ -2189,12 +2209,19 @@ async function runTurboJob(job) {
       stagnantRounds: cfg.scrapeStagnantRounds
     };
 
-    const scrapeResp = await sendToTabSafe(turboTabId, { action: 'scrapeTweets', scrapeConfig });
-    if (!scrapeResp?.ok) {
-      throw new Error(scrapeResp?.error || '采集失败');
+    // Root-cause fix: X 在后台未激活 tab 下常出现虚拟列表不渲染，导致采集 0 条。
+    // 先短暂激活急速 tab 触发首屏渲染，再切回用户原 tab，之后再采集。
+    await warmupTurboTabAndReturn(1100);
+
+    let allTweets = await scrapeWithConfig(scrapeConfig);
+
+    // 若仍是 0 条，再执行一次更强的前台激活重试。
+    if (allTweets.length === 0) {
+      job.progressText = '后台未采集到推文，正在前台重试一次…';
+      await warmupTurboTabAndReturn(1800);
+      allTweets = await scrapeWithConfig(scrapeConfig);
     }
 
-    const allTweets = scrapeResp.tweets || [];
     if (allTweets.length === 0) {
       job.progressText = '页面无推文';
       job.status = 'done';
@@ -2238,7 +2265,7 @@ async function runTurboJob(job) {
   }
 }
 
-async function startTurboAnalysisForUrl(url) {
+async function startTurboAnalysisForUrl(url, sourceTabId = null) {
   const runningCount = turboPool.jobs.filter(j => j.status === 'running').length;
   if (runningCount >= MAX_TURBO_CONCURRENT) {
     throw new Error(`已有 ${runningCount} 个急速分析任务在运行，达到并发上限（${MAX_TURBO_CONCURRENT}）。请稍候再试。`);
@@ -2248,6 +2275,7 @@ async function startTurboAnalysisForUrl(url) {
   const job = {
     id: jobId,
     url,
+    sourceTabId: Number.isInteger(sourceTabId) ? sourceTabId : null,
     status: 'running',
     found: 0,
     enqueued: 0,
@@ -2501,7 +2529,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
           sendResponse({ ok: false, needsConfig: true, error: issue });
           return null;
         }
-        return startTurboAnalysisForUrl(msg.url);
+        return startTurboAnalysisForUrl(msg.url, msg.sourceTabId);
       })
       .then(result => {
         if (result) sendResponse({ ok: true, ...result });

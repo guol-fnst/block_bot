@@ -69,6 +69,22 @@ async function getTurboStatus() {
   return resp.status;
 }
 
+function formatTurboJobUrl(url) {
+  try {
+    const u = new URL(String(url || ''));
+    const host = (u.hostname || '').replace(/^www\./i, '');
+    const path = u.pathname || '/';
+    const statusMatch = path.match(/\/status\/(\d+)/i);
+    if (statusMatch && statusMatch[1]) {
+      const prefix = path.split('/status/')[0] || '';
+      return `${host}${prefix}/status/${statusMatch[1]}`;
+    }
+    return `${host}${path}`;
+  } catch (_) {
+    return String(url || '').replace(/^https?:\/\/(www\.)?/i, '');
+  }
+}
+
 function renderTurboStatus(s) {
   const panel = document.getElementById('turbo-status-panel');
   const list = document.getElementById('turbo-job-list');
@@ -96,10 +112,10 @@ function renderTurboStatus(s) {
       icon = '✗';
       text = job.error || '急速分析失败';
     }
-    const shortUrl = (job.url || '').replace(/^https?:\/\/(www\.)?/, '').slice(0, 40);
+    const displayUrl = formatTurboJobUrl(job.url || '');
     li.innerHTML =
       `<span class="tj-icon">${icon}</span>` +
-      `<span class="tj-text" title="${escapeHtml(job.url || '')}">[${escapeHtml(shortUrl)}] ${escapeHtml(text)}</span>`;
+      `<span class="tj-text" title="${escapeHtml(job.url || '')}">[${escapeHtml(displayUrl)}] ${escapeHtml(text)}</span>`;
     list.appendChild(li);
   });
 }
@@ -135,7 +151,11 @@ async function startTurboAnalysis() {
   if (btn) { btn.disabled = true; }
 
   try {
-    const resp = await chrome.runtime.sendMessage({ action: 'startTurboAnalysis', url });
+    const resp = await chrome.runtime.sendMessage({
+      action: 'startTurboAnalysis',
+      url,
+      sourceTabId: tabs[0]?.id || null
+    });
     if (!resp?.ok) {
       if (resp?.needsConfig) {
         showNotice(resp.error || '请先配置模型服务。', true, true);
