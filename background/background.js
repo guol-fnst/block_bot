@@ -2201,15 +2201,16 @@ async function runTurboJob(job) {
     const targetRounds = Math.ceil(cfg.scrapeMaxTweets / 6);
     const effectiveScrapeRounds = Math.min(300, Math.max(cfg.scrapeMaxRounds, targetRounds));
 
-    // 快速检查：只采集首屏，如果有内容则立刻切回
+    // 快速检查：初步采集，如果有足够内容则立刻切回
+    // 使用2轮快速滚动 + 较长等待，确保采集充分但仍保持快速
     const quickCheckConfig = {
       scrollWaitMs: cfg.scrapeScrollWaitMs,
-      maxRounds: 1,
-      maxTweets: 6,
+      maxRounds: 2,
+      maxTweets: 25,
       stagnantRounds: cfg.scrapeStagnantRounds
     };
 
-    // 完整采集配置（若快速检查为 0 才使用）
+    // 完整采集配置（若快速检查采集不足才使用）
     const fullScrapeConfig = {
       scrollWaitMs: cfg.scrapeScrollWaitMs,
       maxRounds: effectiveScrapeRounds,
@@ -2218,30 +2219,31 @@ async function runTurboJob(job) {
     };
 
     // Root-cause fix: X 在后台未激活 tab 下常出现虚拟列表不渲染，导致采集 0 条。
-    // 激活 turbo tab，快速检测首屏。若有内容，立刻切回源 tab，最小化用户打扰。
-    // 若首屏无内容，才进行延长等待后的完整采集。
+    // 激活 turbo tab，快速检测内容。若采集充分，立刻切回源 tab，最小化用户打扰。
+    // 若采集不足，才进行完整采集。
     let allTweets = [];
     try {
       await tabsUpdate(turboTabId, { active: true });
-      // 简短等待，让首屏渲染
-      await sleep(600);
+      // 充足等待，让首屏和后续内容渲染
+      await sleep(1100);
 
-      // 快速检查：只采集首屏
+      // 快速检查：2轮采集，目标25条推文
       job.progressText = '快速检测中…';
       allTweets = await scrapeWithConfig(quickCheckConfig);
 
-      // 若快速检查成功采集到内容，立刻切回，不用再等
-      if (allTweets.length > 0) {
-        // 有内容，直接准备切回（后面的finally会处理）
+      // 若快速检查采集充分，立刻切回，不用再等
+      if (allTweets.length >= 15) {
+        // 采集充分，直接准备切回（后面的finally会处理）
         job.progressText = `检测到 ${allTweets.length} 条推文…`;
       } else {
-        // 首屏无内容，进行延长等待和完整采集
-        job.progressText = '首屏无内容，延长等待中…';
-        await sleep(1900);
-        window.scrollBy({ top: 450, behavior: 'auto' });
-        await sleep(700);
+        // 采集不足，进行完整采集
+        job.progressText = `仅采得 ${allTweets.length} 条，继续完整采集…`;
+        await sleep(1500);
+        window.scrollBy({ top: 500, behavior: 'auto' });
+        await sleep(600);
         job.progressText = '完整采集中…';
-        allTweets = await scrapeWithConfig(fullScrapeConfig);
+        const fullTweets = await scrapeWithConfig(fullScrapeConfig);
+        allTweets = fullTweets;
       }
     } finally {
       // 采集完毕后切回源 tab
