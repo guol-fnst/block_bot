@@ -2145,8 +2145,8 @@ async function collectPostReplies(tabId, maxReplies = 100, cfg = {}) {
 function getTurboStatusSnapshot() {
   const running = turboPool.jobs.filter(j => j.status === 'running');
   const finished = turboPool.jobs.filter(j => j.status !== 'running');
-  // Show all running jobs plus the most recent 5 completed ones
-  const visible = running.concat(finished.slice(-5));
+  // Show at most 3 jobs total (prioritize running, then recent completed)
+  const visible = running.slice(0, 3).concat(finished.slice(0, Math.max(0, 3 - running.length)));
   return {
     jobs: visible.map(j => ({
       id: j.id,
@@ -2210,16 +2210,28 @@ async function runTurboJob(job) {
     };
 
     // Root-cause fix: X 在后台未激活 tab 下常出现虚拟列表不渲染，导致采集 0 条。
-    // 先短暂激活急速 tab 触发首屏渲染，再切回用户原 tab，之后再采集。
-    await warmupTurboTabAndReturn(1100);
+    // 激活 turbo tab 一次，在激活期间完成首次采集 + 必要的重试，然后切回原 tab。
+    // 这样最小化标签页切换次数（只来回切一次）。
+    let allTweets = [];
+    try {
+      await tabsUpdate(turboTabId, { active: true });
+      await sleep(1400);
 
-    let allTweets = await scrapeWithConfig(scrapeConfig);
-
-    // 若仍是 0 条，再执行一次更强的前台激活重试。
-    if (allTweets.length === 0) {
-      job.progressText = '后台未采集到推文，正在前台重试一次…';
-      await warmupTurboTabAndReturn(1800);
       allTweets = await scrapeWithConfig(scrapeConfig);
+
+      // 若首次采集为 0，在激活态下进行延长等待和重试，不再额外切换 tab。
+      if (allTweets.length === 0) {
+        job.progressText = '首轮采集为空，延长等待中…';
+        await sleep(1100);
+        window.scrollBy({ top: 450, behavior: 'auto' });
+        await sleep(800);
+        allTweets = await scrapeWithConfig(scrapeConfig);
+      }
+    } finally {
+      // 采集完毕后切回源 tab
+      if (job.sourceTabId) {
+        await tabsUpdate(job.sourceTabId, { active: true }).catch(() => {});
+      }
     }
 
     if (allTweets.length === 0) {
