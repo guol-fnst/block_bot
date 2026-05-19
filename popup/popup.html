@@ -70,7 +70,11 @@
   <section class="queue-panel" id="global-queue-panel">
     <div class="queue-actions-top">
       <button class="btn btn-primary" id="btn-analyze-inline">开始分析当前页面</button>
-      <button class="btn btn-info" id="btn-deep-scan">深度扫描某博主</button>
+      <button class="btn btn-turbo" id="btn-turbo-analyze" title="急速模式：在后台新开标签页自动分析并屏蔽，无需等待">⚡ 急速分析</button>
+    </div>
+    <!-- 急速模式任务状态 -->
+    <div id="turbo-status-panel" class="turbo-status-panel hidden">
+      <ul id="turbo-job-list" class="turbo-job-list"></ul>
     </div>
     <div class="queue-header">
       <p id="queue-msg">屏蔽任务：空闲</p>
@@ -79,12 +83,11 @@
     <div class="progress-bar-wrap compact">
       <div class="progress-bar" id="queue-progress-bar"></div>
     </div>
-    <ul id="queue-log" class="block-log compact"></ul>
     <div class="queue-actions">
       <button class="btn btn-secondary" id="btn-queue-pause">暂停</button>
       <button class="btn btn-secondary" id="btn-queue-resume">继续</button>
       <button class="btn btn-secondary" id="btn-queue-retry-failed">重试失败</button>
-      <button class="btn btn-secondary" id="btn-queue-clear-done">清理完成</button>
+      <button class="btn btn-info" id="btn-queue-clear-done">深度扫描某博主</button>
     </div>
   </section>
 
@@ -134,31 +137,6 @@
       <button class="btn btn-secondary" id="btn-deep-scan-pause">暂停</button>
       <button class="btn btn-secondary" id="btn-deep-scan-cancel">取消</button>
     </div>
-  </section>
-
-  <!-- ── View: blocking in progress ────────────────────────────────────── -->
-  <section id="view-blocking" class="view hidden">
-    <div class="block-header">
-      <p id="block-msg">正在屏蔽…</p>
-      <p id="block-detail" class="muted"></p>
-    </div>
-    <div class="progress-bar-wrap">
-      <div class="progress-bar" id="progress-bar"></div>
-    </div>
-    <ul id="block-log" class="block-log"></ul>
-    <div class="block-actions">
-      <button class="btn btn-secondary" id="btn-pause">暂停</button>
-    </div>
-  </section>
-
-  <!-- ── View: done ─────────────────────────────────────────────────────── -->
-  <section id="view-done" class="view hidden">
-    <div class="notice success">
-      <span class="notice-icon">✅</span>
-      <p id="done-msg">屏蔽完成。</p>
-    </div>
-    <ul id="done-log" class="block-log"></ul>
-    <button class="btn btn-secondary" id="btn-done-ok">完成</button>
   </section>
 
   <script src="popup.js"></script>

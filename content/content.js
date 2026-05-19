@@ -191,6 +191,7 @@
   }
 
   async function collectTweetsWithAutoScroll(threadAuthorHandle, scrapeConfig = {}) {
+    // 无论普通模式还是急速模式，都显示采集遮罩。
     const restore = disableScraping();
     try {
       const maxTweets = normalizeInt(scrapeConfig.maxTweets, 20, 5000, DEFAULT_SCRAPE_MAX_TWEETS);

@@ -97,6 +97,38 @@ body {
 .btn-info { background: #1d7af0; color: #fff; }
 .btn-info:not(:disabled):hover { background: #1563d0; }
 
+.btn-turbo { background: #f97316; color: #fff; }
+.btn-turbo:not(:disabled):hover { background: #ea6c0a; }
+.btn-turbo:disabled { opacity: .4; cursor: not-allowed; }
+
+/* ── Turbo status panel ──────────────────────────────────────────────────────── */
+.turbo-status-panel {
+  margin: 6px 0 2px;
+  border-top: 1px solid #e5e7eb;
+  padding-top: 6px;
+}
+
+.turbo-job-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  font-size: 11px;
+}
+
+.turbo-job-list li {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 0;
+  color: #555;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.turbo-job-list .tj-icon { flex-shrink: 0; }
+.turbo-job-list .tj-text { overflow: hidden; text-overflow: ellipsis; }
+
 .btn-link {
   background: none;
   border: none;

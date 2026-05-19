@@ -21,6 +21,7 @@ const API_FETCH_TIMEOUT_MS = 30000;
 const PERSIST_BLOCK_QUEUE_KEY = 'blockQueueState';
 const PERSIST_DEEP_SCAN_KEY  = 'deepScanPersist';
 const CIRCUIT_BREAKER_THRESHOLD = 5;
+const MAX_TURBO_CONCURRENT = 2;
 
 const GEMINI_MODELS = [
   'gemini-3.1-flash-lite',
@@ -50,6 +51,12 @@ const blockQueue = {
   log: [],
   errorMsg: '',
   workerTabId: null
+};
+
+// 急速模式任务池：每个 job 对应一个后台采集+分析 tab
+const turboPool = {
+  jobs: [],   // { id, url, status:'running'|'done'|'failed', found, enqueued, progressText, error, tabId }
+  nextId: 1
 };
 
 // Deep Scan State
@@ -2133,6 +2140,136 @@ async function collectPostReplies(tabId, maxReplies = 100, cfg = {}) {
   return replies.slice(0, maxReplies);
 }
 
+// ── 急速模式（Turbo Mode）────────────────────────────────────────────────────
+
+function getTurboStatusSnapshot() {
+  const running = turboPool.jobs.filter(j => j.status === 'running');
+  const finished = turboPool.jobs.filter(j => j.status !== 'running');
+  // Show all running jobs plus the most recent 5 completed ones
+  const visible = running.concat(finished.slice(-5));
+  return {
+    jobs: visible.map(j => ({
+      id: j.id,
+      url: j.url,
+      status: j.status,
+      found: j.found,
+      enqueued: j.enqueued,
+      progressText: j.progressText,
+      error: j.error
+    })),
+    runningCount: running.length,
+    maxConcurrent: MAX_TURBO_CONCURRENT
+  };
+}
+
+async function runTurboJob(job) {
+  let turboTabId = null;
+  try {
+    job.progressText = '正在打开页面…';
+
+    const tab = await tabsCreate(job.url, false);
+    turboTabId = tab.id;
+    job.tabId = turboTabId;
+
+    try {
+      await waitForTabLoaded(turboTabId, 18000);
+    } catch (_) {
+      // Continue even if timeout; content may still be available.
+    }
+
+    job.progressText = '正在采集推文…';
+
+    const cfg = await getProviderConfig();
+    const targetRounds = Math.ceil(cfg.scrapeMaxTweets / 6);
+    const effectiveScrapeRounds = Math.min(300, Math.max(cfg.scrapeMaxRounds, targetRounds));
+    const scrapeConfig = {
+      scrollWaitMs: cfg.scrapeScrollWaitMs,
+      maxRounds: effectiveScrapeRounds,
+      maxTweets: cfg.scrapeMaxTweets,
+      stagnantRounds: cfg.scrapeStagnantRounds
+    };
+
+    const scrapeResp = await sendToTabSafe(turboTabId, { action: 'scrapeTweets', scrapeConfig });
+    if (!scrapeResp?.ok) {
+      throw new Error(scrapeResp?.error || '采集失败');
+    }
+
+    const allTweets = scrapeResp.tweets || [];
+    if (allTweets.length === 0) {
+      job.progressText = '页面无推文';
+      job.status = 'done';
+      return;
+    }
+
+    job.progressText = `已采集 ${allTweets.length} 条推文，正在 AI 分析…`;
+
+    const prefilter = splitObviousBotReplies(allTweets, cfg.obviousBotKeywords);
+    const results = prefilter.localResults.slice();
+
+    if (prefilter.modelTweets.length > 0) {
+      const modelResults = await analyzeTweetsOptimized(prefilter.modelTweets, cfg, async (done, total) => {
+        job.progressText = `已采集 ${allTweets.length} 条；AI 分析 ${done}/${total}…`;
+      });
+      results.push(...modelResults);
+      detectAutoReplyBots(prefilter.modelTweets, modelResults);
+    }
+
+    const candidates = normalizeCandidates(results, cfg.spamConfidenceThreshold);
+    job.found = candidates.length;
+
+    if (candidates.length > 0) {
+      const added = enqueueBlockAccounts(candidates);
+      job.enqueued = added;
+      runGlobalBlockQueue();
+    }
+
+    job.progressText = `完成：发现 ${job.found} 个疑似账号，已加入屏蔽队列 ${job.enqueued} 个`;
+    job.status = 'done';
+  } catch (e) {
+    job.status = 'failed';
+    job.error = e.message || '急速分析失败';
+    job.progressText = '';
+  } finally {
+    // 关闭后台采集 tab
+    if (turboTabId) {
+      try { await tabsRemove(turboTabId); } catch (_) {}
+      job.tabId = null;
+    }
+  }
+}
+
+async function startTurboAnalysisForUrl(url) {
+  const runningCount = turboPool.jobs.filter(j => j.status === 'running').length;
+  if (runningCount >= MAX_TURBO_CONCURRENT) {
+    throw new Error(`已有 ${runningCount} 个急速分析任务在运行，达到并发上限（${MAX_TURBO_CONCURRENT}）。请稍候再试。`);
+  }
+
+  const jobId = turboPool.nextId++;
+  const job = {
+    id: jobId,
+    url,
+    status: 'running',
+    found: 0,
+    enqueued: 0,
+    progressText: '正在启动…',
+    error: '',
+    tabId: null
+  };
+  turboPool.jobs.push(job);
+
+  // 只保留最近 30 条记录（已完成的最多保留 20 条）
+  if (turboPool.jobs.length > 30) {
+    const running = turboPool.jobs.filter(j => j.status === 'running');
+    const done = turboPool.jobs.filter(j => j.status !== 'running').slice(-20);
+    turboPool.jobs = running.concat(done);
+  }
+
+  // 异步执行（fire-and-forget）
+  runTurboJob(job).catch(() => {});
+
+  return { jobId, status: getTurboStatusSnapshot() };
+}
+
 // ── Tab 事件监听：页面分析缓存管理 ────────────────────────────────────────────
 /**
  * 监听 tab URL 变化，清空旧缓存
@@ -2353,6 +2490,28 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     deepScanState.cancelled = true;
     deepScanState.running = false;
     sendResponse({ ok: true });
+    return false;
+  }
+
+  if (msg.action === 'startTurboAnalysis') {
+    getProviderConfig()
+      .then(cfg => {
+        const issue = getProviderConfigIssue(cfg);
+        if (issue) {
+          sendResponse({ ok: false, needsConfig: true, error: issue });
+          return null;
+        }
+        return startTurboAnalysisForUrl(msg.url);
+      })
+      .then(result => {
+        if (result) sendResponse({ ok: true, ...result });
+      })
+      .catch(e => sendResponse({ ok: false, error: e.message }));
+    return true;
+  }
+
+  if (msg.action === 'getTurboStatus') {
+    sendResponse({ ok: true, status: getTurboStatusSnapshot() });
     return false;
   }
 });
