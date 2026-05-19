@@ -2146,7 +2146,7 @@ function getTurboStatusSnapshot() {
   const running = turboPool.jobs.filter(j => j.status === 'running');
   const finished = turboPool.jobs.filter(j => j.status !== 'running');
   // Show at most 3 jobs total (prioritize running, then recent completed)
-  const visible = running.slice(0, 3).concat(finished.slice(0, Math.max(0, 3 - running.length)));
+  const visible = running.slice(0, 3).concat(finished.slice(-Math.max(0, 3 - running.length)));
   return {
     jobs: visible.map(j => ({
       id: j.id,
