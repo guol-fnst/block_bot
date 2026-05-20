@@ -410,7 +410,17 @@ async function applyAnalysisState(state) {
   }
 
   if (state.status === 'error') {
-    showNotice('⚠️ 分析失败：' + (state.error || '未知错误'), true);
+    const interrupted = state.error && (
+      state.error.includes('已中断') || state.error.includes('已中止') ||
+      state.error.includes('扩展重启') || state.error.includes('已跳转')
+    );
+    if (interrupted) {
+      analysisRunning = false;
+      updateAnalyzeButtonState();
+      showView(isXTab ? 'idle' : 'notX');
+    } else {
+      showNotice('⚠️ 分析失败：' + (state.error || '未知错误'), true);
+    }
     return;
   }
 

@@ -2195,15 +2195,27 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
       console.log(`[Cache] Tab ${tabId} URL 变化，清空旧缓存`);
       clearPageAnalysisCache(tabId);
       initPageAnalysisCache(tabId, tab.url);
+      // 若该 tab 正在分析，URL 已变，释放并发槽并清空僵尸状态
+      if (runningTabs.has(tabId)) {
+        runningTabs.delete(tabId);
+        setAnalysisState(tabId, {
+          status: 'error',
+          error: '页面已跳转，分析已中止',
+          progressText: '',
+          scannedTweetCount: 0,
+          candidates: []
+        }).catch(() => {});
+      }
     }
   }
 });
 
 /**
- * 监听 tab 关闭，清空缓存
+ * 监听 tab 关闭，清空缓存并释放并发槽
  */
 chrome.tabs.onRemoved.addListener(tabId => {
   clearPageAnalysisCache(tabId);
+  runningTabs.delete(tabId);
 });
 
 // ── Message handler ───────────────────────────────────────────────────────────
@@ -2336,8 +2348,17 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   }
 
   if (msg.action === 'getAnalysisForTab') {
-    getAnalysisState(msg.tabId)
-      .then(state => sendResponse({ ok: true, state }))
+    const tid = msg.tabId;
+    getAnalysisState(tid)
+      .then(async state => {
+        // If storage says running but SW was restarted (runningTabs empty),
+        // the analysis is a zombie — mark it as interrupted so popup unblocks.
+        if (state && state.status === 'running' && !runningTabs.has(tid)) {
+          state = { ...state, status: 'error', error: '分析任务已中断（扩展重启）', progressText: '' };
+          await setAnalysisState(tid, state).catch(() => {});
+        }
+        sendResponse({ ok: true, state });
+      })
       .catch(e => sendResponse({ ok: false, error: e.message }));
     return true;
   }
