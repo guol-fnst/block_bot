@@ -72,6 +72,13 @@
       <button class="btn btn-primary" id="btn-analyze-inline">开始分析当前页面</button>
       <button class="btn btn-info" id="btn-deep-scan">深度扫描某博主</button>
     </div>
+    <div class="auto-block-row">
+      <label class="toggle-label" for="toggle-auto-block">
+        <input type="checkbox" id="toggle-auto-block" />
+        <span class="toggle-switch"></span>
+        <span class="toggle-text">自动屏蔽模式（无需确认，完成后自动关闭）</span>
+      </label>
+    </div>
     <div class="queue-header">
       <p id="queue-msg">屏蔽任务：空闲</p>
       <p id="queue-detail" class="muted"></p>
@@ -84,7 +91,7 @@
       <button class="btn btn-secondary" id="btn-queue-pause">暂停</button>
       <button class="btn btn-secondary" id="btn-queue-resume">继续</button>
       <button class="btn btn-secondary" id="btn-queue-retry-failed">重试失败</button>
-      <button class="btn btn-secondary" id="btn-queue-clear-done">清理完成</button>
+      <button class="btn btn-secondary" id="btn-queue-details">屏蔽详情</button>
     </div>
   </section>
 
@@ -160,6 +167,25 @@
     <ul id="done-log" class="block-log"></ul>
     <button class="btn btn-secondary" id="btn-done-ok">完成</button>
   </section>
+
+  <!-- ── Modal: Block Details ─────────────────────────────────────────────── -->
+  <div id="modal-block-details" class="modal hidden">
+    <div class="modal-content modal-content-details">
+      <div class="modal-header">
+        <h2>📋 屏蔽记录详情</h2>
+        <button class="modal-close" id="modal-close-block-details">&times;</button>
+      </div>
+      <div class="modal-body modal-body-details">
+        <p id="block-details-summary" class="block-details-summary"></p>
+        <div class="block-details-filters">
+          <button class="filter-btn filter-btn-active" id="filter-all" data-filter="all">全部</button>
+          <button class="filter-btn" id="filter-done" data-filter="done">✓ 成功</button>
+          <button class="filter-btn" id="filter-failed" data-filter="failed">✗ 失败</button>
+        </div>
+        <ul id="block-details-list" class="block-details-list"></ul>
+      </div>
+    </div>
+  </div>
 
   <script src="popup.js"></script>
 </body>

@@ -19,6 +19,9 @@ const API_RETRY_MAX_DELAY_MS = 8000;
 const API_FETCH_TIMEOUT_MS = 30000;
 
 const PERSIST_BLOCK_QUEUE_KEY = 'blockQueueState';
+const PERSIST_TASK_SESSIONS_KEY = 'taskSessions';
+const MAX_TASK_SESSIONS = 20;
+const MAX_CONCURRENT_ANALYSES = 2;
 const PERSIST_DEEP_SCAN_KEY  = 'deepScanPersist';
 const CIRCUIT_BREAKER_THRESHOLD = 5;
 
@@ -51,6 +54,9 @@ const blockQueue = {
   errorMsg: '',
   workerTabId: null
 };
+
+// Task-level session history (each enqueue call = one session)
+const taskSessions = [];
 
 // Deep Scan State
 const deepScanState = {
@@ -277,6 +283,11 @@ function saveBlockQueueState() {
   }).catch(e => console.warn('[Persist] saveBlockQueueState failed:', e));
 }
 
+function saveTaskSessions() {
+  storageSet({ [PERSIST_TASK_SESSIONS_KEY]: taskSessions.slice() })
+    .catch(e => console.warn('[Persist] saveTaskSessions failed:', e));
+}
+
 /**
  * 将 Deep Scan 关键字段写入 storage。
  * 在扫描完成、出错、步骤里程碑时触发（fire-and-forget）。
@@ -305,7 +316,7 @@ function saveDeepScanState() {
  * deepScanState 如果上次正在运行则标记为中断错误；若已完成则保留结果。
  */
 async function restorePersistedState() {
-  const data = await storageGet([PERSIST_BLOCK_QUEUE_KEY, PERSIST_DEEP_SCAN_KEY]);
+  const data = await storageGet([PERSIST_BLOCK_QUEUE_KEY, PERSIST_DEEP_SCAN_KEY, PERSIST_TASK_SESSIONS_KEY]);
 
   const bq = data[PERSIST_BLOCK_QUEUE_KEY];
   if (bq) {
@@ -319,6 +330,11 @@ async function restorePersistedState() {
     blockQueue.errorMsg= bq.errorMsg|| '';
     recalcTotals();
     console.log(`[Persist] Restored blockQueue: ${blockQueue.queue.length} items`);
+  }
+
+  const ts = data[PERSIST_TASK_SESSIONS_KEY];
+  if (Array.isArray(ts)) {
+    taskSessions.splice(0, taskSessions.length, ...ts);
   }
 
   const ds = data[PERSIST_DEEP_SCAN_KEY];
@@ -537,7 +553,9 @@ function getBlockStatusSnapshot() {
     consecutiveFails: blockQueue.consecutiveFails,
     current: blockQueue.current,
     log: blockQueue.log.slice(),
-    errorMsg: blockQueue.errorMsg
+    errorMsg: blockQueue.errorMsg,
+    recentSessions: taskSessions.slice(-3).slice().reverse(),
+    allSessions: taskSessions.slice().reverse()
   };
 }
 
@@ -572,9 +590,10 @@ function clearCompletedBlockItems() {
   return before - blockQueue.queue.length;
 }
 
-function enqueueBlockAccounts(accounts) {
+function enqueueBlockAccounts(accounts, meta = {}) {
   const seen = new Set(blockQueue.queue.map(i => i.handle.toLowerCase()));
   let added = 0;
+  const sessionId = Date.now();
 
   (accounts || []).forEach(a => {
     const rawHandle = (a && a.handle ? a.handle : '').trim();
@@ -587,10 +606,29 @@ function enqueueBlockAccounts(accounts) {
       handle,
       status: 'pending',
       attempts: 0,
-      lastError: ''
+      lastError: '',
+      sessionId
     });
     added++;
   });
+
+  if (added > 0) {
+    const session = {
+      id: sessionId,
+      timestamp: sessionId,
+      sourceUrl: String(meta.sourceUrl || ''),
+      scannedCount: Number(meta.scannedCount) || 0,
+      candidateCount: Number(meta.candidateCount) || 0,
+      enqueuedCount: added,
+      done: 0,
+      failed: 0
+    };
+    taskSessions.push(session);
+    if (taskSessions.length > MAX_TASK_SESSIONS) {
+      taskSessions.splice(0, taskSessions.length - MAX_TASK_SESSIONS);
+    }
+    saveTaskSessions();
+  }
 
   recalcTotals();
   return added;
@@ -624,6 +662,10 @@ async function runGlobalBlockQueue() {
           mode: 'background-ui',
           time: Date.now()
         });
+        if (item.sessionId) {
+          const sess = taskSessions.find(s => s.id === item.sessionId);
+          if (sess) { sess.done++; saveTaskSessions(); }
+        }
       } catch (e) {
         item.status = 'failed';
         item.lastError = e.message || '失败';
@@ -635,6 +677,10 @@ async function runGlobalBlockQueue() {
           error: item.lastError,
           time: Date.now()
         });
+        if (item.sessionId) {
+          const sess = taskSessions.find(s => s.id === item.sessionId);
+          if (sess) { sess.failed++; saveTaskSessions(); }
+        }
 
         // Issue #10: close dirty tab on failure so next attempt gets fresh tab.
         await cleanupWorkerTab();
@@ -2170,7 +2216,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   }
 
   if (msg.action === 'enqueueGlobalBlockAccounts') {
-    const added = enqueueBlockAccounts(msg.accounts || []);
+    const added = enqueueBlockAccounts(msg.accounts || [], msg.meta || {});
     runGlobalBlockQueue();
     sendResponse({ ok: true, added, status: getBlockStatusSnapshot() });
     return false;
@@ -2248,6 +2294,14 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
         }))
         .catch(e => sendResponse({ ok: false, error: e.message }));
       return true;
+    }
+
+    if (runningTabs.size >= MAX_CONCURRENT_ANALYSES) {
+      sendResponse({
+        ok: false,
+        error: `已有 ${runningTabs.size} 个分析任务并行运行，最多支持 ${MAX_CONCURRENT_ANALYSES} 个。请等待完成后再试。`
+      });
+      return false;
     }
 
     getProviderConfig()

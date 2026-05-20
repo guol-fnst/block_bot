@@ -16,6 +16,11 @@ let scannedTweetCount = 0;
 let analysisPollTimer = null;
 let queuePollTimer = null;
 let analysisRunning = false;
+let autoBlockEnabled = false;
+let lastFullLog = [];
+let lastAllSessions = [];
+let currentTabUrl = '';
+let currentScanSource = '';
 
 function isSupportedXUrl(url) {
   try {
@@ -42,6 +47,47 @@ function escapeHtml(str) {
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;');
+}
+
+function formatRelativeTime(ts) {
+  const diff = Date.now() - ts;
+  const s = Math.floor(diff / 1000);
+  if (s < 60) return '刚刚';
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m} 分钟前`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h} 小时前`;
+  const d = Math.floor(h / 24);
+  return `${d} 天前`;
+}
+
+function formatPageLabel(url) {
+  if (!url) return '未知页面';
+  if (url.startsWith('deep:')) {
+    return `深度扫描 ${url.slice(5)}`;
+  }
+  try {
+    const u = new URL(url);
+    const path = u.pathname.replace(/\/$/, '');
+    if (!path || path === '/home') return 'X 首页';
+    if (path === '/search') {
+      const q = u.searchParams.get('q') || '';
+      return `搜索：${q.slice(0, 25)}`;
+    }
+    const m = path.match(/^\/([^\/]+)(\/(.+))?$/);
+    if (m) {
+      const user = m[1];
+      const sub = m[3];
+      if (sub === 'with_replies') return `@${user} 的回复`;
+      if (sub === 'media') return `@${user} 的媒体`;
+      if (sub === 'likes') return `@${user} 的喜欢`;
+      if (!sub) return `@${user}`;
+      return `@${user}/${sub}`;
+    }
+    return path;
+  } catch (_) {
+    return url.slice(0, 40);
+  }
 }
 
 function confidenceClass(c) {
@@ -109,7 +155,6 @@ function renderQueueStatus(s) {
   const pauseBtn = document.getElementById('btn-queue-pause');
   const resumeBtn = document.getElementById('btn-queue-resume');
   const retryFailedBtn = document.getElementById('btn-queue-retry-failed');
-  const clearDoneBtn = document.getElementById('btn-queue-clear-done');
 
   const pending = (s.queue || []).filter(i => i.status === 'pending').length;
   const failed = Number(s.failed || 0);
@@ -125,19 +170,55 @@ function renderQueueStatus(s) {
   bar.style.width = `${Math.max(0, Math.min(100, pct))}%`;
 
   logEl.innerHTML = '';
-  (s.log || []).slice(-8).reverse().forEach(entry => {
-    const li = document.createElement('li');
-    li.className = `log-item log-${entry.status}`;
-    li.textContent = entry.status === 'done'
-      ? `✓ ${entry.handle}`
-      : `✗ ${entry.handle}：${entry.error || '失败'}`;
-    logEl.appendChild(li);
+  lastFullLog = s.log || [];
+  lastAllSessions = s.allSessions || [];
+
+  // Group all sessions by sourceUrl, show last 3 unique pages
+  const pageMap = new Map();
+  (s.allSessions || []).forEach(sess => {
+    const key = sess.sourceUrl || 'unknown';
+    if (!pageMap.has(key)) {
+      pageMap.set(key, { sourceUrl: key, timestamp: 0, scannedCount: 0, enqueuedCount: 0, done: 0, failed: 0 });
+    }
+    const page = pageMap.get(key);
+    page.scannedCount += sess.scannedCount;
+    page.enqueuedCount += sess.enqueuedCount;
+    page.done += sess.done;
+    page.failed += sess.failed;
+    if (sess.timestamp > page.timestamp) page.timestamp = sess.timestamp;
   });
+  const pages = Array.from(pageMap.values())
+    .sort((a, b) => b.timestamp - a.timestamp)
+    .slice(0, 3);
+
+  if (pages.length === 0) {
+    const li = document.createElement('li');
+    li.className = 'task-session-empty';
+    li.textContent = '暂无任务记录';
+    logEl.appendChild(li);
+  } else {
+    pages.forEach(page => {
+      const pending = page.enqueuedCount - page.done - page.failed;
+      const li = document.createElement('li');
+      li.className = 'task-session-item';
+      li.innerHTML =
+        `<div class="task-session-row">`+
+        `<span class="task-session-page">${escapeHtml(formatPageLabel(page.sourceUrl))}</span>`+
+        `<span class="task-session-time">${escapeHtml(formatRelativeTime(page.timestamp))}</span>`+
+        `</div>`+
+        `<div class="task-session-row">`+
+        `<span class="task-session-nums">扫描 <strong>${page.scannedCount}</strong> 条 · 屏蔽 <strong>${page.enqueuedCount}</strong> 个</span>`+
+        `<span class="ts-done">✓${page.done}</span>`+
+        `<span class="ts-failed">✗${page.failed}</span>`+
+        (pending > 0 ? `<span class="ts-pending">⏳${pending}</span>` : '') +
+        `</div>`;
+      logEl.appendChild(li);
+    });
+  }
 
   pauseBtn.disabled = !s.running || s.paused;
   resumeBtn.disabled = !s.paused || pending === 0;
   retryFailedBtn.disabled = s.running || failed === 0;
-  clearDoneBtn.disabled = s.running || done === 0;
 }
 
 async function refreshQueueStatus() {
@@ -159,6 +240,24 @@ async function init() {
 
   currentTabId = tab?.id || null;
   isXTab = Boolean(tab && isSupportedXUrl(tab.url));
+  currentTabUrl = tab?.url || '';
+  currentScanSource = currentTabUrl;
+
+  // ── Load auto-block setting ────────────────────────────────────────────────
+  try {
+    const stored = await chrome.storage.local.get('autoBlock');
+    autoBlockEnabled = Boolean(stored.autoBlock);
+  } catch (_) {}
+  const toggleEl = document.getElementById('toggle-auto-block');
+  if (toggleEl) {
+    toggleEl.checked = autoBlockEnabled;
+    toggleEl.addEventListener('change', async () => {
+      autoBlockEnabled = toggleEl.checked;
+      try {
+        await chrome.storage.local.set({ autoBlock: autoBlockEnabled });
+      } catch (_) {}
+    });
+  }
 
   startQueuePolling();
 
@@ -223,6 +322,8 @@ async function startAnalysis() {
     showNotice('当前标签页不是 X 站点页面，请切到 x.com / twitter.com 页面后重试。', true);
     return;
   }
+
+  currentScanSource = currentTabUrl;
 
   stopAnalysisPolling();
   analysisRunning = true;
@@ -291,7 +392,7 @@ function showNotice(msg, isError, showOptionsButton = false) {
   showView('noResults');
 }
 
-function applyAnalysisState(state) {
+async function applyAnalysisState(state) {
   if (!state) {
     analysisRunning = false;
     updateAnalyzeButtonState();
@@ -336,6 +437,12 @@ function applyAnalysisState(state) {
       : [];
     if (candidates.length === 0) {
       showNotice(`扫描了 ${scannedTweetCount} 条推文，未发现疑似垃圾账号。`, false);
+      return;
+    }
+    if (autoBlockEnabled) {
+      candidates.forEach(c => { c.selected = true; });
+      await addSelectedToQueue();
+      window.close();
       return;
     }
     renderResults();
@@ -419,7 +526,11 @@ async function addSelectedToQueue() {
   if (selected.length === 0) return;
 
   try {
-    const resp = await chrome.runtime.sendMessage({ action: 'enqueueGlobalBlockAccounts', accounts: selected });
+    const resp = await chrome.runtime.sendMessage({
+      action: 'enqueueGlobalBlockAccounts',
+      accounts: selected,
+      meta: { scannedCount: scannedTweetCount, candidateCount: candidates.length, sourceUrl: currentScanSource }
+    });
     if (!resp?.ok) throw new Error(resp?.error || '加入队列失败');
     await refreshQueueStatus();
 
@@ -495,7 +606,7 @@ async function getDeepScanStatus() {
   return resp.status;
 }
 
-function renderDeepScanStatus(status) {
+async function renderDeepScanStatus(status) {
   const msgEl = document.getElementById('deep-scan-msg');
   const postsEl = document.getElementById('deep-scan-posts-count');
   const repliesEl = document.getElementById('deep-scan-replies-count');
@@ -520,9 +631,15 @@ function renderDeepScanStatus(status) {
   if (status.completed) {
     stopDeepScanPolling();
     if (status.candidates && status.candidates.length > 0) {
-      // Show results and add to queue
       scannedTweetCount = status.repliesCount;
       candidates = (status.candidates || []).map(c => ({ ...c, selected: true }));
+      currentScanSource = `deep:@${(status.handle || '').replace(/^@/, '')}`;
+      if (autoBlockEnabled) {
+        await addSelectedToQueue();
+        chrome.runtime.sendMessage({ action: 'clearDeepScanCompleted' }).catch(() => {});
+        window.close();
+        return;
+      }
       renderResults();
     } else {
       showNotice(`深度扫描完成，未找到疑似账号。`, false);
@@ -583,6 +700,81 @@ async function clearDoneQueue() {
   refreshQueueStatus();
 }
 
+let blockDetailsFilter = 'all';
+
+function openBlockDetails() {
+  blockDetailsFilter = 'all';
+  renderBlockDetails();
+  document.getElementById('modal-block-details').classList.remove('hidden');
+}
+
+function closeBlockDetails() {
+  document.getElementById('modal-block-details').classList.add('hidden');
+}
+
+function renderBlockDetails() {
+  // Build per-page aggregates from all sessions
+  const pageMap = new Map();
+  lastAllSessions.forEach(sess => {
+    const key = sess.sourceUrl || 'unknown';
+    if (!pageMap.has(key)) {
+      pageMap.set(key, { sourceUrl: key, timestamp: 0, scannedCount: 0, enqueuedCount: 0, done: 0, failed: 0 });
+    }
+    const page = pageMap.get(key);
+    page.scannedCount += sess.scannedCount;
+    page.enqueuedCount += sess.enqueuedCount;
+    page.done += sess.done;
+    page.failed += sess.failed;
+    if (sess.timestamp > page.timestamp) page.timestamp = sess.timestamp;
+  });
+  const allPages = Array.from(pageMap.values()).sort((a, b) => b.timestamp - a.timestamp);
+
+  const totalDone = allPages.reduce((a, p) => a + p.done, 0);
+  const totalFailed = allPages.reduce((a, p) => a + p.failed, 0);
+
+  document.getElementById('block-details-summary').textContent =
+    allPages.length > 0
+      ? `共 ${allPages.length} 个页面：成功屏蔽 ${totalDone} 个，失败 ${totalFailed} 个`
+      : '暂无任务记录';
+
+  document.querySelectorAll('.filter-btn').forEach(btn => {
+    btn.classList.toggle('filter-btn-active', btn.dataset.filter === blockDetailsFilter);
+  });
+
+  const list = document.getElementById('block-details-list');
+  list.innerHTML = '';
+
+  const filtered = allPages.filter(page => {
+    if (blockDetailsFilter === 'done') return page.done > 0;
+    if (blockDetailsFilter === 'failed') return page.failed > 0;
+    return true;
+  });
+
+  if (filtered.length === 0) {
+    const li = document.createElement('li');
+    li.className = 'block-details-empty';
+    li.textContent = '暂无记录';
+    list.appendChild(li);
+    return;
+  }
+
+  filtered.forEach(page => {
+    const pending = page.enqueuedCount - page.done - page.failed;
+    const li = document.createElement('li');
+    li.className = 'block-details-session-header';
+    li.innerHTML =
+      `<span class="bds-page">${escapeHtml(formatPageLabel(page.sourceUrl))}</span>` +
+      `<span class="bds-time">${escapeHtml(formatRelativeTime(page.timestamp))}</span>` +
+      `<span class="bds-scan">扫 ${page.scannedCount} 条 · 屏蔽 ${page.enqueuedCount}</span>` +
+      `<span class="bds-stats">` +
+        `<span class="ts-done">✓${page.done}</span> ` +
+        `<span class="ts-failed">✗${page.failed}</span>` +
+        (pending > 0 ? ` <span class="ts-pending">⏳${pending}</span>` : '') +
+      `</span>`;
+    list.appendChild(li);
+  });
+}
+
 bindClick('btn-options', () => {
   chrome.runtime.openOptionsPage();
 });
@@ -624,7 +816,19 @@ bindClick('btn-cancel-results', () => {
 bindClick('btn-queue-pause', pauseQueue);
 bindClick('btn-queue-resume', resumeQueue);
 bindClick('btn-queue-retry-failed', retryFailedQueue);
-bindClick('btn-queue-clear-done', clearDoneQueue);
+bindClick('btn-queue-details', openBlockDetails);
+
+// Block details modal
+bindClick('modal-close-block-details', closeBlockDetails);
+document.getElementById('modal-block-details').addEventListener('click', e => {
+  if (e.target.id === 'modal-block-details') closeBlockDetails();
+});
+document.querySelectorAll('.filter-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    blockDetailsFilter = btn.dataset.filter;
+    renderBlockDetails();
+  });
+});
 
 // Deep Scan bindings
 bindClick('btn-deep-scan', openDeepScanModal);
