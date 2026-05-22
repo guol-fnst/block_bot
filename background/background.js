@@ -2152,6 +2152,8 @@ async function collectUserPostLinks(tabId, maxLinks = 20, targetHandle = '', cfg
   // Normalise handle for path matching: "@foo" or "foo" → "/foo/"
   const handleSlug = targetHandle.replace(/^@/, '').toLowerCase();
 
+  await scrollTabToTop(tabId, waitMs);
+
   for (let i = 0; i < maxRounds; i++) {
     const result = await executeInTab(tabId, (slug) => {
       const posts = [];
@@ -2193,7 +2195,39 @@ async function collectUserPostLinks(tabId, maxLinks = 20, targetHandle = '', cfg
 
     lastCount = links.length;
     await executeInTab(tabId, () => {
-      window.scrollBy({ top: Math.max(window.innerHeight * 0.9, 800), behavior: 'auto' });
+      function isScrollableElement(el) {
+        if (!el || el === document.body) return false;
+        const style = window.getComputedStyle(el);
+        if (!style) return false;
+        const overflowY = style.overflowY || '';
+        const canScroll = overflowY === 'auto' || overflowY === 'scroll' || overflowY === 'overlay';
+        return canScroll && (el.scrollHeight - el.clientHeight) > 80;
+      }
+
+      function getPreferredScrollRoot() {
+        const tweetArticle = document.querySelector('article[data-testid="tweet"]');
+        let node = tweetArticle;
+        while (node && node !== document.body) {
+          if (isScrollableElement(node)) return node;
+          node = node.parentElement;
+        }
+
+        const primaryColumn = document.querySelector('[data-testid="primaryColumn"]');
+        node = primaryColumn;
+        while (node && node !== document.body) {
+          if (isScrollableElement(node)) return node;
+          node = node.parentElement;
+        }
+
+        return document.scrollingElement || document.documentElement || document.body;
+      }
+
+      const root = getPreferredScrollRoot();
+      if (!root || root === document.documentElement || root === document.body || root === document.scrollingElement) {
+        window.scrollBy({ top: Math.max(window.innerHeight * 0.9, 800), behavior: 'auto' });
+      } else {
+        root.scrollBy({ top: Math.max(window.innerHeight * 0.9, 800), behavior: 'auto' });
+      }
       return true;
     }).catch(() => {});
     const waitNextMs = stagnantRounds > 0 ? waitMs : Math.max(600, Math.round(waitMs * 0.82));
@@ -2220,6 +2254,75 @@ async function waitForRepliesRendered(tabId, minCount = 2, timeoutMs = 15000) {
   return false;
 }
 
+async function scrollTabToTop(tabId, waitMs = 800) {
+  const settleMs = Math.max(250, Math.min(1200, Math.round(waitMs * 0.75)));
+  let stableRounds = 0;
+  let lastY = -1;
+
+  for (let i = 0; i < 8; i++) {
+    const currentY = await executeInTab(tabId, (delayMs) => {
+      function isScrollableElement(el) {
+        if (!el || el === document.body) return false;
+        const style = window.getComputedStyle(el);
+        if (!style) return false;
+        const overflowY = style.overflowY || '';
+        const canScroll = overflowY === 'auto' || overflowY === 'scroll' || overflowY === 'overlay';
+        return canScroll && (el.scrollHeight - el.clientHeight) > 80;
+      }
+
+      function getPreferredScrollRoot() {
+        const tweetArticle = document.querySelector('article[data-testid="tweet"]');
+        let node = tweetArticle;
+        while (node && node !== document.body) {
+          if (isScrollableElement(node)) return node;
+          node = node.parentElement;
+        }
+
+        const primaryColumn = document.querySelector('[data-testid="primaryColumn"]');
+        node = primaryColumn;
+        while (node && node !== document.body) {
+          if (isScrollableElement(node)) return node;
+          node = node.parentElement;
+        }
+
+        return document.scrollingElement || document.documentElement || document.body;
+      }
+
+      function getScrollTop(root) {
+        if (!root || root === document.documentElement || root === document.body || root === document.scrollingElement) {
+          return Math.max(
+            window.scrollY || 0,
+            document.documentElement?.scrollTop || 0,
+            document.body?.scrollTop || 0
+          );
+        }
+        return root.scrollTop || 0;
+      }
+
+      return new Promise(resolve => {
+        const root = getPreferredScrollRoot();
+        if (!root || root === document.documentElement || root === document.body || root === document.scrollingElement) {
+          window.scrollTo({ top: 0, behavior: 'auto' });
+        } else {
+          root.scrollTo({ top: 0, behavior: 'auto' });
+        }
+        setTimeout(() => {
+          resolve(getScrollTop(root));
+        }, delayMs);
+      });
+    }, [settleMs]).catch(() => null);
+
+    if (currentY === null) return;
+    if (currentY <= 2) {
+      stableRounds += 1;
+      if (stableRounds >= 2) break;
+    } else if (currentY === lastY) {
+      break;
+    }
+    lastY = currentY;
+  }
+}
+
 async function collectPostReplies(tabId, maxReplies = 100, cfg = {}) {
   // Bug 4 fix: we no longer deduplicate by handle across the entire function.
   // Each scroll round deduplicates only within itself (via the in-page `seen`
@@ -2235,6 +2338,8 @@ async function collectPostReplies(tabId, maxReplies = 100, cfg = {}) {
   const stagnantLimit = normalizeScrapeStagnantRounds(cfg.scrapeStagnantRounds);
   let lastCount = 0;
   let stagnantRounds = 0;
+
+  await scrollTabToTop(tabId, waitMs);
 
   // X.com is a SPA: tab status=complete fires before React has rendered reply
   // articles. Wait until at least 2 articles are present (index 0 = original
@@ -2335,7 +2440,39 @@ async function collectPostReplies(tabId, maxReplies = 100, cfg = {}) {
 
     lastCount = replies.length;
     await executeInTab(tabId, () => {
-      window.scrollBy({ top: Math.max(window.innerHeight * 0.8, 600), behavior: 'auto' });
+      function isScrollableElement(el) {
+        if (!el || el === document.body) return false;
+        const style = window.getComputedStyle(el);
+        if (!style) return false;
+        const overflowY = style.overflowY || '';
+        const canScroll = overflowY === 'auto' || overflowY === 'scroll' || overflowY === 'overlay';
+        return canScroll && (el.scrollHeight - el.clientHeight) > 80;
+      }
+
+      function getPreferredScrollRoot() {
+        const tweetArticle = document.querySelector('article[data-testid="tweet"]');
+        let node = tweetArticle;
+        while (node && node !== document.body) {
+          if (isScrollableElement(node)) return node;
+          node = node.parentElement;
+        }
+
+        const primaryColumn = document.querySelector('[data-testid="primaryColumn"]');
+        node = primaryColumn;
+        while (node && node !== document.body) {
+          if (isScrollableElement(node)) return node;
+          node = node.parentElement;
+        }
+
+        return document.scrollingElement || document.documentElement || document.body;
+      }
+
+      const root = getPreferredScrollRoot();
+      if (!root || root === document.documentElement || root === document.body || root === document.scrollingElement) {
+        window.scrollBy({ top: Math.max(window.innerHeight * 0.8, 600), behavior: 'auto' });
+      } else {
+        root.scrollBy({ top: Math.max(window.innerHeight * 0.8, 600), behavior: 'auto' });
+      }
       return true;
     }).catch(() => {});
     const waitNextMs = stagnantRounds > 0 ? waitMs : Math.max(600, Math.round(waitMs * 0.82));

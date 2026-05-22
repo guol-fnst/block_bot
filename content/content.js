@@ -138,6 +138,81 @@
     });
   }
 
+  function isScrollableElement(el) {
+    if (!el || el === document.body) return false;
+    const style = window.getComputedStyle(el);
+    if (!style) return false;
+    const overflowY = style.overflowY || '';
+    const canScroll = overflowY === 'auto' || overflowY === 'scroll' || overflowY === 'overlay';
+    return canScroll && (el.scrollHeight - el.clientHeight) > 80;
+  }
+
+  function getPreferredScrollRoot() {
+    const tweetArticle = document.querySelector('article[data-testid="tweet"]');
+    let node = tweetArticle;
+    while (node && node !== document.body) {
+      if (isScrollableElement(node)) return node;
+      node = node.parentElement;
+    }
+
+    const primaryColumn = document.querySelector('[data-testid="primaryColumn"]');
+    node = primaryColumn;
+    while (node && node !== document.body) {
+      if (isScrollableElement(node)) return node;
+      node = node.parentElement;
+    }
+
+    return document.scrollingElement || document.documentElement || document.body;
+  }
+
+  function getScrollTop(root) {
+    if (!root || root === document.documentElement || root === document.body || root === document.scrollingElement) {
+      return Math.max(
+        window.scrollY || 0,
+        document.documentElement?.scrollTop || 0,
+        document.body?.scrollTop || 0
+      );
+    }
+    return root.scrollTop || 0;
+  }
+
+  function scrollRootTo(root, top) {
+    if (!root || root === document.documentElement || root === document.body || root === document.scrollingElement) {
+      window.scrollTo({ top, behavior: 'auto' });
+      return;
+    }
+    root.scrollTo({ top, behavior: 'auto' });
+  }
+
+  function scrollRootBy(root, top) {
+    if (!root || root === document.documentElement || root === document.body || root === document.scrollingElement) {
+      window.scrollBy({ top, behavior: 'auto' });
+      return;
+    }
+    root.scrollBy({ top, behavior: 'auto' });
+  }
+
+  async function scrollToPageTop(waitMs) {
+    const settleMs = Math.max(250, Math.min(1200, Math.round(waitMs * 0.75)));
+    let stableRounds = 0;
+    let lastY = -1;
+
+    for (let i = 0; i < 8; i++) {
+      const root = getPreferredScrollRoot();
+      scrollRootTo(root, 0);
+      await sleep(settleMs);
+
+      const currentY = getScrollTop(root);
+      if (currentY <= 2) {
+        stableRounds += 1;
+        if (stableRounds >= 2) break;
+      } else if (currentY === lastY) {
+        break;
+      }
+      lastY = currentY;
+    }
+  }
+
   // 禁用用户交互，防止采集过程中的手动操作干扰虚拟滚动
   // 但允许页面内容异步加载（无限滚动继续工作）
   function disableScraping() {
@@ -208,10 +283,13 @@
       const stagnantLimit = normalizeInt(scrapeConfig.stagnantRounds, 2, 8, DEFAULT_SCRAPE_STAGNANT_ROUNDS);
       const confirmWaitMs = Math.min(2800, waitMs + 250);
 
+      await scrollToPageTop(waitMs);
+
       const merged = new Map();
       let stagnantRounds = 0;
       let lastSize = 0;
       let lastHeight = 0;
+      const scrollRoot = getPreferredScrollRoot();
 
       for (let i = 0; i < maxRounds; i++) {
         const visible = collectVisibleTweets(threadAuthorHandle);
@@ -247,14 +325,14 @@
           lastHeight = document.body.scrollHeight;
         }
 
-        window.scrollBy({ top: Math.max(window.innerHeight * 0.9, 800), behavior: 'auto' });
+        scrollRootBy(scrollRoot, Math.max(window.innerHeight * 0.9, 800));
         // 增量采集场景下可以稍快一些，停滞时会自动回到完整等待。
         const waitNextMs = stagnantRounds > 0 ? waitMs : Math.max(600, Math.round(waitMs * 0.82));
         await sleep(waitNextMs);
       }
 
       // 最终再滚动一次并等待，确保末尾推文不遗漏
-      window.scrollBy({ top: Math.max(window.innerHeight * 1.2, 1000), behavior: 'auto' });
+      scrollRootBy(scrollRoot, Math.max(window.innerHeight * 1.2, 1000));
       await sleep(confirmWaitMs);
       mergeTweetsIntoMap(merged, collectVisibleTweets(threadAuthorHandle));
       return Array.from(merged.values()).slice(0, maxTweets).map(({ uniqueId, ...tweet }) => tweet);
