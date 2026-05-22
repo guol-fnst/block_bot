@@ -412,9 +412,14 @@ body {
 }
 
 /* ── Auto-block toggle row ───────────────────────────────────────────────────── */
-.auto-block-row {
+.auto-block-row,
+.analysis-mode-row {
   margin-bottom: 8px;
   padding: 6px 2px;
+}
+
+.analysis-mode-row {
+  padding-top: 0;
 }
 
 .toggle-label {

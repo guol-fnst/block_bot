@@ -47,6 +47,10 @@
     return !reserved.has(slug.toLowerCase());
   }
 
+  function isDefaultProfileImageSrc(src) {
+    return /default_profile|default_profile_images|profile_images\/default/i.test(String(src || ''));
+  }
+
   function parseTweetFromArticle(article, threadAuthorHandle) {
     // 改善1: 过滤广告推文（Promoted Tweets），避免误判广告主账号
     if (article.querySelector('[data-testid="placementTracking"]')) return null;
@@ -89,6 +93,8 @@
     const tweetUrl = statusPath ? `https://x.com${statusPath}` : '';
     const tweetIdMatch = statusPath.match(/\/status\/(\d+)/);
     const tweetId = tweetIdMatch ? tweetIdMatch[1] : '';
+    const avatarImg = article.querySelector('[data-testid="Tweet-User-Avatar"] img, [data-testid*="UserAvatar"] img');
+    const avatarSrc = avatarImg ? avatarImg.getAttribute('src') || '' : '';
 
     const fallbackId = `${handle.toLowerCase()}|${text.slice(0, 180).toLowerCase()}`;
     const uniqueId = tweetId || fallbackId;
@@ -100,6 +106,7 @@
       displayName,
       handle,
       text,
+      defaultProfileImage: isDefaultProfileImageSrc(avatarSrc),
       profileUrl: `https://x.com/${handleSlug}`
     };
   }

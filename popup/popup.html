@@ -25,8 +25,7 @@
   <!-- ── View: idle ─────────────────────────────────────────────────────── -->
   <section id="view-idle" class="view">
     <p class="hint">
-      点击下方按钮，扫描当前页面已显示的推文，用你配置的大模型检测垃圾账号和机器人号，
-      再由你确认后执行屏蔽。
+      点击下方按钮扫描当前页面已显示的推文。本地规则无需 API；开启 AI 分析后，会在本地规则之外调用你配置的模型辅助判断。
     </p>
   </section>
 
@@ -77,6 +76,13 @@
         <input type="checkbox" id="toggle-auto-block" />
         <span class="toggle-switch"></span>
         <span class="toggle-text">自动屏蔽模式（无需确认，完成后自动关闭）</span>
+      </label>
+    </div>
+    <div class="analysis-mode-row">
+      <label class="toggle-label" for="toggle-ai-analysis">
+        <input type="checkbox" id="toggle-ai-analysis" />
+        <span class="toggle-switch"></span>
+        <span class="toggle-text">AI 分析（可选；关闭时只使用本地规则，不需要配置 API）</span>
       </label>
     </div>
     <div class="queue-header">

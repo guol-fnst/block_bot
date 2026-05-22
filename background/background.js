@@ -892,6 +892,7 @@ async function getProviderConfig() {
     'spamConfidenceThreshold',
     'obviousBotKeywords',
     'customDetectionPrompt',
+    'aiAnalysisEnabled',
     'analysisBatchSize',
     'analysisParallelism',
     'scrapeScrollWaitMs',
@@ -912,6 +913,7 @@ async function getProviderConfig() {
     spamConfidenceThreshold: normalizeThreshold(d.spamConfidenceThreshold),
     obviousBotKeywords: normalizeKeywordList(d.obviousBotKeywords),
     customDetectionPrompt: d.customDetectionPrompt || '',
+    aiAnalysisEnabled: Boolean(d.aiAnalysisEnabled),
     analysisBatchSize: normalizeAnalysisBatchSize(d.analysisBatchSize),
     analysisParallelism: normalizeAnalysisParallelism(d.analysisParallelism),
     scrapeScrollWaitMs: normalizeScrapeScrollWaitMs(d.scrapeScrollWaitMs),
@@ -930,6 +932,10 @@ function getProviderConfigIssue(cfg) {
   if (!cfg.openaiModel) return '模型名未设置。请先打开设置页配置模型服务。';
   if (!cfg.openaiApiKey) return 'API Key 未设置。请先打开设置页配置模型服务。';
   return '';
+}
+
+function canUseAiProvider(cfg) {
+  return Boolean(cfg?.aiAnalysisEnabled) && !getProviderConfigIssue(cfg);
 }
 
 async function testProviderConfig() {
@@ -1271,6 +1277,15 @@ const BUILT_IN_OBVIOUS_BOT_KEYWORDS = [
   '搭子',
   '弟弟',
   '哥哥',
+  '主人',
+  '找主人',
+  '温柔主人',
+  '今夜有空',
+  '想约',
+  '想月',
+  '寂寞',
+  '陪聊',
+  '交友',
   '嫂',
   'sao货',
   '能打',
@@ -1294,6 +1309,16 @@ const BUILT_IN_OBVIOUS_BOT_KEYWORDS = [
   '夸克盘',
   'pan.quark.cn',
   'quark网盘'
+];
+
+const LOCAL_RULE_SPAM_TEXT_PATTERNS = [
+  /\b(airdrop|mint|claim|giveaway|whitelist|presale|casino|bonus|jackpot)\b/i,
+  /\b(onlyfans|escort|hookup|dating|adult|nude|porn)\b/i,
+  /\b(dm me|message me|link in bio|check my profile|join telegram|join discord)\b/i,
+  /\b(telegram|whatsapp|discord\.gg|t\.me\/|wa\.me\/|bit\.ly|tinyurl)\b/i,
+  /空投|白名单|领币|钱包|合约|私信|引流|返佣|博彩|投注|百家乐|真人荷官|电报群|飞机群|看主页|主页见|链接在简介/,
+  /同城|附近|约炮|速配|上门|外围|裸聊|私房|包夜/,
+  /今夜有空|今晚有空|想约|想月|找个.{0,4}主人|温柔主人|寂寞|陪聊|交友/
 ];
 
 function hasCloudDrivePromoSignal(text, customKeywords = []) {
@@ -1383,6 +1408,37 @@ function isLowInfoMixedEmojiReply(text) {
   return core.length >= 2 && core.length <= 6 && digitCount >= 1 && alphaCount <= 2;
 }
 
+function hasSuspiciousPromoText(text) {
+  const value = String(text || '');
+  return LOCAL_RULE_SPAM_TEXT_PATTERNS.some(pattern => pattern.test(value));
+}
+
+function hasUrlLikeSignal(text) {
+  return /(https?:\/\/|www\.|t\.co\/|bit\.ly\/|tinyurl\.com\/|t\.me\/|wa\.me\/|discord\.gg\/|line\.me\/)/i.test(String(text || ''));
+}
+
+function hasLowTextEntropy(text) {
+  const compact = compactText(text).toLowerCase();
+  if (compact.length < 8) return false;
+  const chars = new Set(compact.split(''));
+  const diversity = chars.size / compact.length;
+  const digitCount = (compact.match(/\d/g) || []).length;
+  return diversity < 0.32 || digitCount >= Math.max(5, compact.length * 0.55);
+}
+
+function buildLocalRuleHit(tweet, confidence, reasons) {
+  return {
+    handle: String(tweet?.handle || ''),
+    displayName: String(tweet?.displayName || ''),
+    isSpamOrBot: true,
+    confidence,
+    reason: `Local rules: ${reasons.join(', ')}`,
+    evidenceTweet: String(tweet?.text || '').trim(),
+    source: 'local-rules',
+    selected: confidence >= 0.9
+  };
+}
+
 function detectObviousBotReply(tweet, customKeywords = []) {
   const text = String(tweet?.text || '').trim();
   const displayName = String(tweet?.displayName || '');
@@ -1395,6 +1451,11 @@ function detectObviousBotReply(tweet, customKeywords = []) {
   const tinyToken = isTinyTokenReply(text);
   const emojiOnly = isEmojiOnlyOrEmojiNumberReply(text);
   const lowInfoMixed = isLowInfoMixedEmojiReply(text);
+  const suspiciousPromoText = hasSuspiciousPromoText(text);
+  const urlLike = hasUrlLikeSignal(text);
+  const lowEntropy = hasLowTextEntropy(handle) || hasLowTextEntropy(displayName);
+  const lowInfoText = stripEmojiLikeChars(text).length <= 8;
+  const defaultAvatar = Boolean(tweet?.defaultProfileImage);
 
   if (adultName) reasons.push('display name or handle contains adult/spam lure keywords');
   if (cloudDrivePromo) reasons.push('reply text contains cloud-drive promo link keywords');
@@ -1402,57 +1463,41 @@ function detectObviousBotReply(tweet, customKeywords = []) {
   if (tinyToken) reasons.push('reply text is only a tiny token/number');
   if (emojiOnly) reasons.push('reply text is only emoji or emoji plus numbers');
   if (lowInfoMixed) reasons.push('reply text is emoji mixed with very short alnum fragments');
+  if (suspiciousPromoText) reasons.push('reply text contains spam/scam promo wording');
+  if (urlLike) reasons.push('reply text contains external link or off-platform contact');
+  if (lowEntropy) reasons.push('profile text has low-entropy/generated-looking pattern');
+  if (defaultAvatar) reasons.push('account appears to use a default profile image');
 
   if (cloudDrivePromo) {
-    return {
-      handle,
-      displayName,
-      isSpamOrBot: true,
-      confidence: 0.96,
-      reason: `Local prefilter: ${reasons.join(', ')}`,
-      evidenceTweet: text,
-      source: 'local-prefilter',
-      selected: true
-    };
+    return buildLocalRuleHit(tweet, 0.96, reasons);
   }
 
   if ((adultName && (tinyToken || emojiOnly || randomHandle || lowInfoMixed)) || (randomHandle && (tinyToken || emojiOnly || lowInfoMixed))) {
-    return {
-      handle,
-      displayName,
-      isSpamOrBot: true,
-      confidence: 0.98,
-      reason: `Local prefilter: ${reasons.join(', ')}`,
-      evidenceTweet: text,
-      source: 'local-prefilter',
-      selected: true
-    };
+    return buildLocalRuleHit(tweet, 0.98, reasons);
+  }
+
+  if (suspiciousPromoText && (urlLike || adultName || randomHandle || lowEntropy)) {
+    return buildLocalRuleHit(tweet, urlLike ? 0.94 : 0.9, reasons);
+  }
+
+  if (suspiciousPromoText && lowInfoText) {
+    return buildLocalRuleHit(tweet, 0.9, reasons);
+  }
+
+  if (defaultAvatar && (adultName || randomHandle || suspiciousPromoText || tinyToken || emojiOnly || lowInfoMixed)) {
+    return buildLocalRuleHit(tweet, adultName || suspiciousPromoText ? 0.92 : 0.9, reasons);
   }
 
   if (emojiOnly) {
-    return {
-      handle,
-      displayName,
-      isSpamOrBot: true,
-      confidence: 0.9,
-      reason: `Local prefilter: ${reasons.join(', ')}`,
-      evidenceTweet: text,
-      source: 'local-prefilter',
-      selected: true
-    };
+    return buildLocalRuleHit(tweet, 0.9, reasons);
   }
 
-  if (adultName && stripEmojiLikeChars(text).length <= 8) {
-    return {
-      handle,
-      displayName,
-      isSpamOrBot: true,
-      confidence: 0.95,
-      reason: `Local prefilter: ${reasons.join(', ')}`,
-      evidenceTweet: text,
-      source: 'local-prefilter',
-      selected: true
-    };
+  if (adultName && lowInfoText) {
+    return buildLocalRuleHit(tweet, 0.95, reasons);
+  }
+
+  if (randomHandle && suspiciousPromoText && lowInfoText) {
+    return buildLocalRuleHit(tweet, 0.89, reasons);
   }
 
   return null;
@@ -1506,6 +1551,58 @@ function calcTextSimilarity(text1, text2) {
   const set2 = new Set(tokens2);
   const common = tokens1.filter(t => set2.has(t)).length;
   return common / Math.max(tokens1.length, tokens2.length);
+}
+
+function addCoordinatedLocalRuleResults(tweets, results, customKeywords = []) {
+  if (!Array.isArray(tweets) || tweets.length < 2) return;
+
+  const resultHandles = new Set(
+    (results || [])
+      .map(r => String(r?.handle || '').toLowerCase())
+      .filter(Boolean)
+  );
+  const clustered = new Set();
+
+  for (let i = 0; i < tweets.length; i++) {
+    const a = tweets[i];
+    const aText = String(a?.text || '').trim();
+    const aCore = stripEmojiLikeChars(aText);
+    if (aCore.length < 8 && !hasUrlLikeSignal(aText) && !hasSuspiciousPromoText(aText)) continue;
+
+    const matches = [a];
+    for (let j = i + 1; j < tweets.length; j++) {
+      const b = tweets[j];
+      if (String(a?.handle || '').toLowerCase() === String(b?.handle || '').toLowerCase()) continue;
+      const bText = String(b?.text || '').trim();
+      const sim = calcTextSimilarity(aText, bText);
+      if (sim >= 0.9) {
+        matches.push(b);
+      }
+    }
+
+    const uniqueHandles = new Set(matches.map(t => String(t?.handle || '').toLowerCase()).filter(Boolean));
+    if (uniqueHandles.size < 3) continue;
+
+    const hasRiskContext = matches.some(t => {
+      const text = String(t?.text || '');
+      return hasUrlLikeSignal(text) ||
+        hasSuspiciousPromoText(text) ||
+        hasObviousBotKeyword(String(t?.displayName || ''), customKeywords) ||
+        looksLikeRandomHandle(t?.handle);
+    });
+    if (!hasRiskContext) continue;
+
+    matches.forEach(t => {
+      const key = String(t?.handle || '').toLowerCase();
+      if (!key || resultHandles.has(key) || clustered.has(key)) return;
+      clustered.add(key);
+      resultHandles.add(key);
+      results.push(buildLocalRuleHit(t, 0.91, [
+        `coordinated copy-paste replies across ${uniqueHandles.size} accounts`,
+        'matched without AI'
+      ]));
+    });
+  }
 }
 
 // Detect copy-paste/auto-reply patterns: accounts with near-identical messages
@@ -1664,14 +1761,16 @@ async function getAnalysisState(tabId) {
   return data[key] || null;
 }
 
-async function startAnalysisForTab(tabId) {
+async function startAnalysisForTab(tabId, overrides = {}) {
   if (runningTabs.has(tabId)) return;
   runningTabs.add(tabId);
 
   try {
+    let analysisSourceUrl = '';
     // 获取 tab URL，初始化缓存
     const tab = await chrome.tabs.get(tabId).catch(() => null);
     if (tab?.url) {
+      analysisSourceUrl = String(tab.url);
       initPageAnalysisCache(tabId, tab.url);
     }
 
@@ -1680,10 +1779,15 @@ async function startAnalysisForTab(tabId) {
       scannedTweetCount: 0,
       candidates: [],
       error: '',
-      progressText: '正在采集推文…'
+      progressText: '正在采集推文…',
+      sourceUrl: analysisSourceUrl,
+      autoQueued: false
     });
 
     const cfg = await getProviderConfig();
+    if (typeof overrides.aiAnalysisEnabled === 'boolean') {
+      cfg.aiAnalysisEnabled = overrides.aiAnalysisEnabled;
+    }
     const targetRounds = Math.ceil(cfg.scrapeMaxTweets / 6);
     const effectiveScrapeRounds = Math.min(300, Math.max(cfg.scrapeMaxRounds, targetRounds));
     const scrapeTimeoutMs = Math.min(
@@ -1715,7 +1819,9 @@ async function startAnalysisForTab(tabId) {
         scannedTweetCount: 0,
         candidates: [],
         error: '',
-        progressText: ''
+        progressText: '',
+        sourceUrl: analysisSourceUrl,
+        autoQueued: false
       });
       return;
     }
@@ -1731,7 +1837,9 @@ async function startAnalysisForTab(tabId) {
         scannedTweetCount: allTweets.length,
         candidates: [],
         error: '',
-        progressText: skippedCount > 0 ? `已采集 ${allTweets.length} 条，全部为已分析用户（跳过 ${skippedCount} 个）` : ''
+        progressText: skippedCount > 0 ? `已采集 ${allTweets.length} 条，全部为已分析用户（跳过 ${skippedCount} 个）` : '',
+        sourceUrl: analysisSourceUrl,
+        autoQueued: false
       });
       return;
     }
@@ -1741,26 +1849,45 @@ async function startAnalysisForTab(tabId) {
       scannedTweetCount: allTweets.length,
       candidates: [],
       error: '',
-      progressText: `已采集 ${allTweets.length} 条，正在分析 ${tweets.length} 个新用户${skippedCount > 0 ? `（跳过 ${skippedCount} 个已分析用户）` : ''}…`
+      progressText: `已采集 ${allTweets.length} 条，正在分析 ${tweets.length} 个新用户${skippedCount > 0 ? `（跳过 ${skippedCount} 个已分析用户）` : ''}…`,
+      sourceUrl: analysisSourceUrl,
+      autoQueued: false
     });
 
     const prefilter = splitObviousBotReplies(tweets, cfg.obviousBotKeywords);
     const results = prefilter.localResults.slice();
+    const aiAvailable = canUseAiProvider(cfg);
 
-    if (prefilter.modelTweets.length > 0) {
+    addCoordinatedLocalRuleResults(tweets, results, cfg.obviousBotKeywords);
+
+    if (prefilter.modelTweets.length > 0 && aiAvailable) {
       const modelResults = await analyzeTweetsOptimized(prefilter.modelTweets, cfg, async (done, total) => {
         await setAnalysisState(tabId, {
           status: 'running',
           scannedTweetCount: allTweets.length,
           candidates: [],
           error: '',
-          progressText: `已采集 ${allTweets.length} 条；AI 分析 ${done}/${total}；本地预过滤 ${prefilter.localResults.length} 个`
+          progressText: `已采集 ${allTweets.length} 条；AI 分析 ${done}/${total}；本地预过滤 ${prefilter.localResults.length} 个`,
+          sourceUrl: analysisSourceUrl,
+          autoQueued: false
         });
       });
       results.push(...modelResults);
 
       // Detect coordinated copy-paste/auto-reply bots among tweets that still need model analysis.
       detectAutoReplyBots(prefilter.modelTweets, modelResults);
+    }
+
+    if (prefilter.modelTweets.length > 0 && !aiAvailable) {
+      await setAnalysisState(tabId, {
+        status: 'running',
+        scannedTweetCount: allTweets.length,
+        candidates: [],
+        error: '',
+        progressText: `已采集 ${allTweets.length} 条；AI 未启用，已用本地规则分析 ${tweets.length} 个用户`,
+        sourceUrl: analysisSourceUrl,
+        autoQueued: false
+      });
     }
 
     const newCandidates = normalizeCandidates(results, cfg.spamConfidenceThreshold);
@@ -1771,15 +1898,36 @@ async function startAnalysisForTab(tabId) {
 
     // 与上次分析结果合并，避免多次点击只保留最新一批结果
     const prevState = await getAnalysisState(tabId);
-    const prevCandidates = Array.isArray(prevState?.candidates) ? prevState.candidates : [];
+    const prevCandidates =
+      prevState?.sourceUrl === analysisSourceUrl && Array.isArray(prevState?.candidates)
+        ? prevState.candidates
+        : [];
     const merged = mergeCandidateLists(prevCandidates, newCandidates);
+
+    let autoQueued = false;
+    if (merged.length > 0) {
+      const settings = await storageGet(['autoBlock']).catch(() => ({}));
+      if (Boolean(settings.autoBlock)) {
+        const added = enqueueBlockAccounts(merged, {
+          scannedCount: allTweets.length,
+          candidateCount: merged.length,
+          sourceUrl: analysisSourceUrl
+        });
+        if (added > 0) {
+          autoQueued = true;
+          runGlobalBlockQueue();
+        }
+      }
+    }
 
     await setAnalysisState(tabId, {
       status: merged.length > 0 ? 'done' : 'empty',
       scannedTweetCount: allTweets.length,
       candidates: merged,
       error: '',
-      progressText: ''
+      progressText: '',
+      sourceUrl: analysisSourceUrl,
+      autoQueued
     });
   } catch (e) {
     const prev = (await getAnalysisState(tabId)) || { scannedTweetCount: 0 };
@@ -1788,7 +1936,9 @@ async function startAnalysisForTab(tabId) {
       scannedTweetCount: prev.scannedTweetCount || 0,
       candidates: [],
       error: e.message || '分析失败',
-      progressText: ''
+      progressText: '',
+      sourceUrl: prev.sourceUrl || '',
+      autoQueued: false
     });
   } finally {
     runningTabs.delete(tabId);
@@ -1830,6 +1980,9 @@ async function startDeepScan(config) {
 
   try {
     const cfg = await getProviderConfig();
+    if (typeof deepScanState.config.aiAnalysisEnabled === 'boolean') {
+      cfg.aiAnalysisEnabled = deepScanState.config.aiAnalysisEnabled;
+    }
     await performDeepScan(cfg);
   } catch (e) {
     deepScanState.error = e.message;
@@ -1935,13 +2088,18 @@ async function performDeepScan(cfg) {
     console.log(`[DeepScan] 本地预过滤 - 明显机器人: ${prefilter.localResults.length}, 需要模型分析: ${prefilter.modelTweets.length}`);
     
     let results = [...prefilter.localResults];
+    const aiAvailable = canUseAiProvider(cfg);
+    addCoordinatedLocalRuleResults(filteredReplies, results, cfg.obviousBotKeywords);
 
-    if (prefilter.modelTweets.length > 0) {
+    if (prefilter.modelTweets.length > 0 && aiAvailable) {
       const modelResults = await analyzeTweetsOptimized(prefilter.modelTweets, cfg);
       console.log(`[DeepScan] 模型分析 - 返回结果数: ${modelResults.length}`);
       results.push(...modelResults);
       detectAutoReplyBots(prefilter.modelTweets, modelResults);
       console.log(`[DeepScan] 自动回复检测后 - 总结果数: ${results.length}`);
+    } else if (prefilter.modelTweets.length > 0) {
+      deepScanState.currentStep = `AI 未启用，已用本地规则分析 ${filteredReplies.length} 条回复`;
+      console.log(`[DeepScan] AI 未启用，跳过 ${prefilter.modelTweets.length} 条模型分析候选`);
     }
 
     deepScanState.candidates = normalizeCandidates(results, cfg.spamConfidenceThreshold);
@@ -2140,11 +2298,14 @@ async function collectPostReplies(tabId, maxReplies = 100, cfg = {}) {
           // #5 fix: keep media-only tweets (no text) with a placeholder
           // so image-spam bots are not silently skipped.
           const effectiveText = text || '[媒体内容/无文字推文]';
+          const avatarImg = article.querySelector('[data-testid="Tweet-User-Avatar"] img, [data-testid*="UserAvatar"] img');
+          const avatarSrc = avatarImg ? avatarImg.getAttribute('src') || '' : '';
           tweets.push({
             handle,
             displayName,
             text: effectiveText,
             tweetUrl,
+            defaultProfileImage: /default_profile|default_profile_images|profile_images\/default/i.test(String(avatarSrc || '')),
             profileUrl: `https://x.com/${handle.replace('@', '')}`
           });
         } catch (_) {}
@@ -2189,25 +2350,28 @@ async function collectPostReplies(tabId, maxReplies = 100, cfg = {}) {
  * 监听 tab URL 变化，清空旧缓存
  */
 chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
-  if (changeInfo.status === 'complete' && tab.url && pageAnalysisCache[tabId]) {
+  if (changeInfo.status !== 'complete' || !tab.url) return;
+
+  if (pageAnalysisCache[tabId]) {
     const oldUrl = pageAnalysisCache[tabId].currentUrl;
     if (oldUrl !== tab.url) {
       console.log(`[Cache] Tab ${tabId} URL 变化，清空旧缓存`);
       clearPageAnalysisCache(tabId);
       initPageAnalysisCache(tabId, tab.url);
-      // 若该 tab 正在分析，URL 已变，释放并发槽并清空僵尸状态
-      if (runningTabs.has(tabId)) {
-        runningTabs.delete(tabId);
-        setAnalysisState(tabId, {
-          status: 'error',
-          error: '页面已跳转，分析已中止',
-          progressText: '',
-          scannedTweetCount: 0,
-          candidates: []
-        }).catch(() => {});
-      }
     }
   }
+
+  // URL changed: clear stale analysis state so old-page results are never
+  // auto-applied on a new page in the same tab.
+  getAnalysisState(tabId)
+    .then(state => {
+      if (!state) return;
+      const stateUrl = String(state.sourceUrl || '');
+      if (!stateUrl || stateUrl === tab.url) return;
+      runningTabs.delete(tabId);
+      storageRemove([analysisKey(tabId)]).catch(() => {});
+    })
+    .catch(() => {});
 });
 
 /**
@@ -2318,13 +2482,16 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
 
     getProviderConfig()
       .then(cfg => {
-        const issue = getProviderConfigIssue(cfg);
-        if (issue) {
-          sendResponse({ ok: false, needsConfig: true, error: issue });
-          return;
+        if (typeof msg.aiAnalysisEnabled === 'boolean') {
+          cfg.aiAnalysisEnabled = msg.aiAnalysisEnabled;
         }
-        startAnalysisForTab(msg.tabId);
-        sendResponse({ ok: true, started: true });
+        startAnalysisForTab(msg.tabId, { aiAnalysisEnabled: cfg.aiAnalysisEnabled });
+        sendResponse({
+          ok: true,
+          started: true,
+          localOnly: !canUseAiProvider(cfg),
+          aiAnalysisEnabled: cfg.aiAnalysisEnabled
+        });
       })
       .catch(e => sendResponse({ ok: false, error: e.message }));
     return true;
@@ -2334,7 +2501,14 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     getProviderConfig()
       .then(cfg => {
         const issue = getProviderConfigIssue(cfg);
-        sendResponse({ ok: true, configured: !issue, issue });
+        sendResponse({
+          ok: true,
+          configured: !issue,
+          aiAnalysisEnabled: cfg.aiAnalysisEnabled,
+          aiReady: canUseAiProvider(cfg),
+          localRulesAvailable: true,
+          issue
+        });
       })
       .catch(e => sendResponse({ ok: false, error: e.message }));
     return true;
@@ -2384,13 +2558,15 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
       .then(async cfg => {
         const tweets = msg.tweets || [];
         const prefilter = splitObviousBotReplies(tweets, cfg.obviousBotKeywords);
-        const modelResults = prefilter.modelTweets.length > 0
+        const results = prefilter.localResults.slice();
+        addCoordinatedLocalRuleResults(tweets, results, cfg.obviousBotKeywords);
+        const modelResults = prefilter.modelTweets.length > 0 && canUseAiProvider(cfg)
           ? await analyzeTweetsOptimized(prefilter.modelTweets, cfg)
           : [];
         if (modelResults.length > 0) {
           detectAutoReplyBots(prefilter.modelTweets, modelResults);
         }
-        return normalizeCandidates(prefilter.localResults.concat(modelResults), cfg.spamConfidenceThreshold);
+        return normalizeCandidates(results.concat(modelResults), cfg.spamConfidenceThreshold);
       })
       .then(results => sendResponse({ ok: true, results }))
       .catch(e => sendResponse({ ok: false, error: e.message }));

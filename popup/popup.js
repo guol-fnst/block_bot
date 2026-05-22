@@ -21,6 +21,8 @@ let lastFullLog = [];
 let lastAllSessions = [];
 let currentTabUrl = '';
 let currentScanSource = '';
+let providerConfigured = true;
+let aiAnalysisEnabled = false;
 
 function isSupportedXUrl(url) {
   try {
@@ -113,7 +115,9 @@ function updateAnalyzeButtonState() {
     inlineAnalyzeBtn.textContent = '请先切到 X 页面';
     return;
   }
-  inlineAnalyzeBtn.textContent = analysisRunning ? '分析中…' : '开始分析当前页面';
+  inlineAnalyzeBtn.textContent = analysisRunning
+    ? '分析中…'
+    : (aiAnalysisEnabled && providerConfigured ? '开始 AI + 本地分析' : '开始本地规则扫描');
 }
 
 function bindClick(id, handler) {
@@ -124,7 +128,13 @@ function bindClick(id, handler) {
 async function getAnalysisState() {
   const resp = await chrome.runtime.sendMessage({ action: 'getAnalysisForTab', tabId: currentTabId });
   if (!resp?.ok) throw new Error(resp?.error || '读取分析状态失败');
-  return resp.state || null;
+  const state = resp.state || null;
+  if (!state) return null;
+  // State is tab-scoped in storage; guard against stale state from a different URL.
+  if (state.sourceUrl && currentTabUrl && state.sourceUrl !== currentTabUrl) {
+    return null;
+  }
+  return state;
 }
 
 async function clearAnalysisState() {
@@ -245,8 +255,9 @@ async function init() {
 
   // ── Load auto-block setting ────────────────────────────────────────────────
   try {
-    const stored = await chrome.storage.local.get('autoBlock');
+    const stored = await chrome.storage.local.get(['autoBlock', 'aiAnalysisEnabled']);
     autoBlockEnabled = Boolean(stored.autoBlock);
+    aiAnalysisEnabled = Boolean(stored.aiAnalysisEnabled);
   } catch (_) {}
   const toggleEl = document.getElementById('toggle-auto-block');
   if (toggleEl) {
@@ -255,6 +266,17 @@ async function init() {
       autoBlockEnabled = toggleEl.checked;
       try {
         await chrome.storage.local.set({ autoBlock: autoBlockEnabled });
+      } catch (_) {}
+    });
+  }
+  const aiToggleEl = document.getElementById('toggle-ai-analysis');
+  if (aiToggleEl) {
+    aiToggleEl.checked = aiAnalysisEnabled;
+    aiToggleEl.addEventListener('change', async () => {
+      aiAnalysisEnabled = aiToggleEl.checked;
+      updateAnalyzeButtonState();
+      try {
+        await chrome.storage.local.set({ aiAnalysisEnabled });
       } catch (_) {}
     });
   }
@@ -310,10 +332,16 @@ async function init() {
 async function renderConfigHintIfNeeded() {
   try {
     const status = await getProviderConfigStatus();
-    const btn = document.getElementById('btn-analyze-inline');
-    if (!status.configured && btn) {
-      btn.textContent = '先配置模型服务';
+    providerConfigured = Boolean(status.configured);
+    aiAnalysisEnabled = Boolean(status.aiAnalysisEnabled);
+    const aiToggleEl = document.getElementById('toggle-ai-analysis');
+    if (aiToggleEl) {
+      aiToggleEl.checked = aiAnalysisEnabled;
+      aiToggleEl.title = providerConfigured
+        ? '开启后会在本地规则之后调用已配置的 AI 模型'
+        : '开启后仍需在设置页配置模型；未配置时会自动使用本地规则';
     }
+    updateAnalyzeButtonState();
   } catch (_) {}
 }
 
@@ -329,17 +357,17 @@ async function startAnalysis() {
   analysisRunning = true;
   updateAnalyzeButtonState();
   showView('scanning');
-  setScanMsg('正在启动分析任务…');
+  setScanMsg(aiAnalysisEnabled && providerConfigured ? '正在启动 AI + 本地分析…' : '正在启动本地规则扫描…');
 
   try {
-    const resp = await chrome.runtime.sendMessage({ action: 'startAnalysisForTab', tabId: currentTabId });
+    const resp = await chrome.runtime.sendMessage({
+      action: 'startAnalysisForTab',
+      tabId: currentTabId,
+      aiAnalysisEnabled
+    });
     if (!resp?.ok) {
       analysisRunning = false;
       updateAnalyzeButtonState();
-      if (resp?.needsConfig) {
-        showNotice(resp.error || '请先配置模型服务。', true, true);
-        return;
-      }
       throw new Error(resp?.error || '启动分析失败');
     }
     if (resp.alreadyRunning && resp.state) {
@@ -449,7 +477,13 @@ async function applyAnalysisState(state) {
       showNotice(`扫描了 ${scannedTweetCount} 条推文，未发现疑似垃圾账号。`, false);
       return;
     }
+    currentScanSource = state.sourceUrl || currentTabUrl;
     if (autoBlockEnabled) {
+      if (state.autoQueued) {
+        await clearAnalysisState();
+        window.close();
+        return;
+      }
       candidates.forEach(c => { c.selected = true; });
       await addSelectedToQueue();
       window.close();
@@ -595,7 +629,8 @@ async function startDeepScan() {
         handle,
         maxPosts,
         maxRepliesPerPost,
-        maxTotalReplies
+        maxTotalReplies,
+        aiAnalysisEnabled
       }
     });
 

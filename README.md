@@ -23,6 +23,8 @@ If your X / Twitter timeline, search results, or reply sections are filled with 
 - Local settings and cache stored in Chrome extension storage.
 - Supports many AI providers and custom OpenAI-compatible endpoints.
 - Local prefilter before AI analysis for obvious bot replies, including emoji-only replies, emoji-plus-number replies, tiny token replies, random-looking handles, and configurable spam keywords.
+- Local rules-only analysis when no AI provider is configured, using high-confidence signals such as generated-looking handles, default profile images, low-information replies, spam/scam promotion wording, off-platform links, and coordinated copy-paste replies.
+- Optional AI analysis toggle in the popup; users can keep AI off and run local-rule scanning without providing any model API endpoint or API key.
 - User-configurable local prefilter keywords in the options page.
 - Chunked AI analysis for larger reply pages to avoid oversized model requests.
 - Gemini fallback across available Gemini models when a model is overloaded or temporarily unavailable.
