@@ -1426,6 +1426,25 @@ function hasLowTextEntropy(text) {
   return diversity < 0.32 || digitCount >= Math.max(5, compact.length * 0.55);
 }
 
+function hasDecorativeTemplateSignal(text) {
+  const raw = String(text || '').trim();
+  const compact = compactText(raw);
+  if (compact.length < 18) return false;
+
+  const emojiCount = (raw.match(/[\p{Extended_Pictographic}\uFE0F]/gu) || []).length;
+  const symbolCount = (raw.match(/[^\p{L}\p{N}\s.,!?'"，。！？、:;（）()@#]/gu) || []).length;
+  const latinWordCount = (raw.match(/[a-z]{3,}/gi) || []).length;
+  const cjkCount = (raw.match(/[\u4e00-\u9fff\u3400-\u4dbf\uf900-\ufaff]/g) || []).length;
+  const lineCount = raw.split(/\n+/).map(s => s.trim()).filter(Boolean).length;
+  const symbolRatio = symbolCount / compact.length;
+
+  return (
+    (emojiCount >= 3 && symbolCount >= 6 && latinWordCount >= 3) ||
+    (lineCount >= 2 && symbolCount >= 4 && symbolRatio >= 0.12 && (latinWordCount >= 3 || cjkCount >= 4)) ||
+    (symbolCount >= 10 && symbolRatio >= 0.2 && latinWordCount >= 3)
+  );
+}
+
 function buildLocalRuleHit(tweet, confidence, reasons) {
   return {
     handle: String(tweet?.handle || ''),
@@ -1456,6 +1475,7 @@ function detectObviousBotReply(tweet, customKeywords = []) {
   const lowEntropy = hasLowTextEntropy(handle) || hasLowTextEntropy(displayName);
   const lowInfoText = stripEmojiLikeChars(text).length <= 8;
   const defaultAvatar = Boolean(tweet?.defaultProfileImage);
+  const decorativeTemplate = hasDecorativeTemplateSignal(text);
 
   if (adultName) reasons.push('display name or handle contains adult/spam lure keywords');
   if (cloudDrivePromo) reasons.push('reply text contains cloud-drive promo link keywords');
@@ -1467,6 +1487,7 @@ function detectObviousBotReply(tweet, customKeywords = []) {
   if (urlLike) reasons.push('reply text contains external link or off-platform contact');
   if (lowEntropy) reasons.push('profile text has low-entropy/generated-looking pattern');
   if (defaultAvatar) reasons.push('account appears to use a default profile image');
+  if (decorativeTemplate) reasons.push('reply text looks like a decorative template bot message');
 
   if (cloudDrivePromo) {
     return buildLocalRuleHit(tweet, 0.96, reasons);
@@ -1482,6 +1503,10 @@ function detectObviousBotReply(tweet, customKeywords = []) {
 
   if (suspiciousPromoText && lowInfoText) {
     return buildLocalRuleHit(tweet, 0.9, reasons);
+  }
+
+  if (randomHandle && decorativeTemplate) {
+    return buildLocalRuleHit(tweet, 0.92, reasons);
   }
 
   if (defaultAvatar && (adultName || randomHandle || suspiciousPromoText || tinyToken || emojiOnly || lowInfoMixed)) {

@@ -85,6 +85,16 @@
         <span class="toggle-text">AI 分析（可选；关闭时只使用本地规则，不需要配置 API）</span>
       </label>
     </div>
+    <section id="review-prompt" class="review-prompt hidden">
+      <button class="review-close" id="btn-review-dismiss" title="关闭">×</button>
+      <div class="review-kicker">Block Bot</div>
+      <p class="review-title">觉得顺手的话，给个好评吧</p>
+      <p class="review-copy">如果它确实帮你省下了清理垃圾账号的时间，一个评分会很有帮助。</p>
+      <div class="review-actions">
+        <button class="btn btn-primary" id="btn-review-rate" type="button">去评价</button>
+        <button class="btn btn-secondary" id="btn-review-later" type="button">稍后再说</button>
+      </div>
+    </section>
     <div class="queue-header">
       <p id="queue-msg">屏蔽任务：空闲</p>
       <p id="queue-detail" class="muted"></p>

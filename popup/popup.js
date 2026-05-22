@@ -23,6 +23,13 @@ let currentTabUrl = '';
 let currentScanSource = '';
 let providerConfigured = true;
 let aiAnalysisEnabled = false;
+let reviewPromptState = null;
+let canOpenStoreReview = false;
+
+const REVIEW_PROMPT_KEY = 'reviewPromptState';
+const REVIEW_MIN_SUCCESSFUL_BLOCKS = 12;
+const REVIEW_MIN_COMPLETED_SESSIONS = 3;
+const REVIEW_SNOOZE_MS = 7 * 24 * 60 * 60 * 1000;
 
 function isSupportedXUrl(url) {
   try {
@@ -123,6 +130,82 @@ function updateAnalyzeButtonState() {
 function bindClick(id, handler) {
   const el = document.getElementById(id);
   if (el) el.addEventListener('click', handler);
+}
+
+function getDefaultReviewPromptState() {
+  return {
+    reviewed: false,
+    dismissed: false,
+    snoozeUntil: 0
+  };
+}
+
+function isChromeWebStoreBuild() {
+  const updateUrl = String(chrome.runtime.getManifest()?.update_url || '');
+  return updateUrl.includes('clients2.google.com/service/update2/crx');
+}
+
+async function loadReviewPromptState() {
+  try {
+    const data = await chrome.storage.local.get(REVIEW_PROMPT_KEY);
+    reviewPromptState = {
+      ...getDefaultReviewPromptState(),
+      ...(data?.[REVIEW_PROMPT_KEY] || {})
+    };
+  } catch (_) {
+    reviewPromptState = getDefaultReviewPromptState();
+  }
+}
+
+async function saveReviewPromptState(patch) {
+  reviewPromptState = {
+    ...(reviewPromptState || getDefaultReviewPromptState()),
+    ...patch
+  };
+  try {
+    await chrome.storage.local.set({ [REVIEW_PROMPT_KEY]: reviewPromptState });
+  } catch (_) {}
+}
+
+function getReviewUrl() {
+  if (!canOpenStoreReview) return '';
+  return `https://chromewebstore.google.com/detail/${chrome.runtime.id}/reviews`;
+}
+
+function shouldShowReviewPrompt(status) {
+  if (!canOpenStoreReview) return false;
+  if (!reviewPromptState) return false;
+  if (reviewPromptState.reviewed || reviewPromptState.dismissed) return false;
+  if (Number(reviewPromptState.snoozeUntil || 0) > Date.now()) return false;
+
+  const sessions = Array.isArray(status?.allSessions) ? status.allSessions : [];
+  const totalDone = sessions.reduce((sum, sess) => sum + Number(sess?.done || 0), 0);
+  const completedSessions = sessions.filter(sess => Number(sess?.done || 0) > 0).length;
+  return totalDone >= REVIEW_MIN_SUCCESSFUL_BLOCKS || completedSessions >= REVIEW_MIN_COMPLETED_SESSIONS;
+}
+
+function renderReviewPrompt(status) {
+  const card = document.getElementById('review-prompt');
+  if (!card) return;
+  card.classList.toggle('hidden', !shouldShowReviewPrompt(status));
+}
+
+async function openReviewPage() {
+  const url = getReviewUrl();
+  if (!url) return;
+  await saveReviewPromptState({ reviewed: true });
+  renderReviewPrompt(null);
+  chrome.tabs.create({ url });
+}
+
+async function snoozeReviewPrompt() {
+  await saveReviewPromptState({ snoozeUntil: Date.now() + REVIEW_SNOOZE_MS });
+  renderReviewPrompt(null);
+}
+
+async function dismissReviewPrompt() {
+  await saveReviewPromptState({ dismissed: true });
+  renderReviewPrompt(null);
 }
 
 async function getAnalysisState() {
@@ -229,6 +312,7 @@ function renderQueueStatus(s) {
   pauseBtn.disabled = !s.running || s.paused;
   resumeBtn.disabled = !s.paused || pending === 0;
   retryFailedBtn.disabled = s.running || failed === 0;
+  renderReviewPrompt(s);
 }
 
 async function refreshQueueStatus() {
@@ -252,6 +336,9 @@ async function init() {
   isXTab = Boolean(tab && isSupportedXUrl(tab.url));
   currentTabUrl = tab?.url || '';
   currentScanSource = currentTabUrl;
+  canOpenStoreReview = isChromeWebStoreBuild();
+
+  await loadReviewPromptState();
 
   // ── Load auto-block setting ────────────────────────────────────────────────
   try {
@@ -862,6 +949,9 @@ bindClick('btn-queue-pause', pauseQueue);
 bindClick('btn-queue-resume', resumeQueue);
 bindClick('btn-queue-retry-failed', retryFailedQueue);
 bindClick('btn-queue-details', openBlockDetails);
+bindClick('btn-review-rate', openReviewPage);
+bindClick('btn-review-later', snoozeReviewPrompt);
+bindClick('btn-review-dismiss', dismissReviewPrompt);
 
 // Block details modal
 bindClick('modal-close-block-details', closeBlockDetails);
