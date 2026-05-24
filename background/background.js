@@ -1471,10 +1471,12 @@ function hasEmojiDecoratedShortEnglishPhrase(text) {
   const words = raw.match(/[a-zA-Z]{2,}/g) || [];
   if (words.length < 4 || words.length > 13) return false;
 
-  // English characters must NOT dominate — decoration must be substantial
+  // English characters must NOT dominate — decoration must be substantial.
+  // Threshold 0.75: even an 8-word phrase like "I fall in love with you more every morning"
+  // has a ratio of ~0.62 (heavy emoji framing keeps total chars high), so 0.75 is the right ceiling.
   const englishLen = words.join('').length;
   const totalLen = raw.replace(/\s/g, '').length;
-  if (totalLen > 0 && englishLen / totalLen > 0.55) return false;
+  if (totalLen > 0 && englishLen / totalLen > 0.75) return false;
 
   return true;
 }
