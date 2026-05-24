@@ -1516,6 +1516,40 @@ function hasObscureScriptDecoration(text) {
   return true;
 }
 
+function hasDecoratedCjkBotPattern(text) {
+  const raw = String(text || '').trim();
+  if (!raw) return false;
+
+  const cjkMatches = raw.match(/[\u4e00-\u9fff\u3400-\u4dbf\uf900-\ufaff]/gu) || [];
+  if (cjkMatches.length < 5 || cjkMatches.length > 16) return false;
+
+  const firstCjk = raw.match(/[\u4e00-\u9fff\u3400-\u4dbf\uf900-\ufaff]/u);
+  const allCjk = Array.from(raw.matchAll(/[\u4e00-\u9fff\u3400-\u4dbf\uf900-\ufaff]/gu));
+  const lastCjk = allCjk[allCjk.length - 1];
+  if (!firstCjk || !lastCjk) return false;
+
+  const firstCjkIndex = firstCjk.index || 0;
+  const lastCjkEnd = (lastCjk.index || 0) + lastCjk[0].length;
+  const prefix = raw.slice(0, firstCjkIndex);
+  const suffix = raw.slice(lastCjkEnd);
+
+  // Count decorative wrappers broadly, including replacement chars that X occasionally
+  // emits when uncommon glyphs fail to round-trip through innerText.
+  const decorativeMatches = s => s.match(/[\uFFFD\u1d00-\u1d7f\u2070-\u209f\u2100-\u214f\u2190-\u2bff\u3000-\u303f\ua000-\uabff\p{Extended_Pictographic}]/gu) || [];
+  const superscriptLikeMatches = s => s.match(/[\u1d2c-\u1d7f\u2070-\u209f]/gu) || [];
+  const prefixDecorative = decorativeMatches(prefix).length;
+  const suffixDecorative = decorativeMatches(suffix).length;
+  const superscriptPrefix = superscriptLikeMatches(prefix).length;
+  const asciiWordCount = (raw.match(/[a-zA-Z]{2,}/g) || []).length;
+
+  if (asciiWordCount > 2) return false;
+
+  return (
+    (prefixDecorative >= 2 && suffixDecorative >= 2) ||
+    (superscriptPrefix >= 4 && suffixDecorative >= 1)
+  );
+}
+
 /**
  * Returns true when the text is a short English phrase (4–13 words)
  * sandwiched inside heavy emoji/symbol decoration — the hallmark of
@@ -1599,6 +1633,7 @@ function detectObviousBotReply(tweet, customKeywords = []) {
   const emojiDecoratedPhrase = hasEmojiDecoratedShortEnglishPhrase(text);
   const mathPrefix = hasMathSymbolPrefix(text);
   const obscureScriptDeco = hasObscureScriptDecoration(text);
+  const decoratedCjkPattern = hasDecoratedCjkBotPattern(text);
 
   if (adultName) reasons.push('display name or handle contains adult/spam lure keywords');
   if (cloudDrivePromo) reasons.push('reply text contains cloud-drive promo link keywords');
@@ -1615,7 +1650,8 @@ function detectObviousBotReply(tweet, customKeywords = []) {
   if (emojiBurst) reasons.push('reply text has unusually dense emoji decoration');
   if (emojiDecoratedPhrase) reasons.push('reply text is a short english phrase wrapped in emoji decoration');
   if (mathPrefix) reasons.push('text starts with math/unicode-operator symbol prefix (bot decoration pattern)');
-  if (obscureScriptDeco) reasons.push('text wraps English phrase in obscure Unicode script characters (bot decoration)');  
+  if (obscureScriptDeco) reasons.push('text wraps English phrase in obscure Unicode script characters (bot decoration)');
+  if (decoratedCjkPattern) reasons.push('text wraps a short CJK phrase in decorative symbols/superscript glyphs (bot decoration)');
 
   if (cloudDrivePromo) {
     return buildLocalRuleHit(tweet, 0.96, reasons);
@@ -1653,6 +1689,10 @@ function detectObviousBotReply(tweet, customKeywords = []) {
     return buildLocalRuleHit(tweet, 0.93, reasons);
   }
 
+  if (randomHandle && decoratedCjkPattern) {
+    return buildLocalRuleHit(tweet, 0.93, reasons);
+  }
+
   if (randomHandle && decorativeTemplate) {
     return buildLocalRuleHit(tweet, 0.92, reasons);
   }
@@ -1665,6 +1705,11 @@ function detectObviousBotReply(tweet, customKeywords = []) {
   // Standalone: obscure-script-wrapped English phrase (e.g. Cham/Tai Viet/Javanese bots).
   // Fires even without randomHandle because the text pattern alone is highly distinctive.
   if (obscureScriptDeco) {
+    return buildLocalRuleHit(tweet, 0.88, reasons);
+  }
+
+  // Standalone: decorative-symbol-wrapped short CJK phrase is also highly distinctive.
+  if (decoratedCjkPattern) {
     return buildLocalRuleHit(tweet, 0.88, reasons);
   }
 

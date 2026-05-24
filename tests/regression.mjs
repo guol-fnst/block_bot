@@ -66,6 +66,7 @@ const {
   hasEmojiDecoratedShortEnglishPhrase,
   hasMathSymbolPrefix,
   hasObscureScriptDecoration,
+  hasDecoratedCjkBotPattern,
   countEmojiChars,
   hasEmojiBurst,
   getEnglishJokeTemplateFamily,
@@ -330,6 +331,22 @@ assert('English dominates (ratio > 0.86)',
 // ═══════════════════════════════════════════════════════════════
 // Non-random-looking handles to verify the standalone obscureScriptDeco rule fires
 // without the randomHandle condition. Confidence should be ≥0.88.
+section('hasDecoratedCjkBotPattern');
+assert('superscript-word prefix + CJK phrase + suffix symbol',
+  hasDecoratedCjkBotPattern('\u1d49\u1d50\u1d52\u1d57\u2071\u1d52\u207f \u5c81\u6708\u6e29\u67d4\u4e07\u4e8b\u7686\u5982\u613f \u273c'), true);
+assert('letterlike-symbol wrapper around CJK phrase',
+  hasDecoratedCjkBotPattern('\u2130\u301b\u250b \u661f\u843d\u5e73\u91ce\u8d74\u5c71\u6cb3 \u301a\u2128\u250a'), true);
+assert('decorative symbol wrapper around CJK phrase #2',
+  hasDecoratedCjkBotPattern('\u2118\u250b\u301a \u5c71\u6cb3\u65e7\u5ff5\u6c90\u665a\u98ce \u301b\u213c\u250a'), true);
+assert('replacement-char noise + emoji wrapper around CJK phrase #1',
+  hasDecoratedCjkBotPattern('\uFFFD\uD83C\uDF39\uFFFD\u25D9\u70F9\u7F8A\u5BB0\u725B\u4E14\u4E3A\u4E50\u25D9\uD83E\uDD69'), true);
+assert('replacement-char noise + emoji wrapper around CJK phrase #2',
+  hasDecoratedCjkBotPattern('\uFFFD\uD83C\uDF39\uFFFD\u2668\u5C0F\u65F6\u4E0D\u8BC6\u6708\u61F5\u61C2\u2668\uD83C\uDF19'), true);
+assert('plain Chinese sentence should not trigger',
+  hasDecoratedCjkBotPattern('\u5c81\u6708\u6e29\u67d4\u4e07\u4e8b\u7686\u5982\u613f'), false);
+assert('English sentence with wrappers should not trigger this CJK rule',
+  hasDecoratedCjkBotPattern('\u2130\u301b\u250b Keep calm and carry on \u301a\u2128\u250a'), false);
+
 section('detectObviousBotReply \u2014 obscure-script-wrapped bots (standalone rule)');
 const OBSCURE_SCRIPT_BOTS = [
   // handle doesn't look random — standalone rule must carry the detection
@@ -342,6 +359,20 @@ const OBSCURE_SCRIPT_BOTS = [
 ];
 for (const t of OBSCURE_SCRIPT_BOTS) {
   assertDetected(t.handle, t, 0.85);
+}
+
+section('detectObviousBotReply — decorated CJK wrapper bots');
+const DECORATED_CJK_BOTS = [
+  { handle: '@qabvpw85456',   displayName: 'Qabvpw',   text: '\u1d49\u1d50\u1d52\u1d57\u2071\u1d52\u207f \u5c81\u6708\u6e29\u67d4\u4e07\u4e8b\u7686\u5982\u613f \u273c' },
+  { handle: '@wztgoark22506', displayName: 'Wztgoark', text: '\u2130\u301b\u250b \u661f\u843d\u5e73\u91ce\u8d74\u5c71\u6cb3 \u301a\u2128\u250a' },
+  { handle: '@aqnts131726',   displayName: 'Aqnts',    text: '\u2118\u250b\u301a \u5c71\u6cb3\u65e7\u5ff5\u6c90\u665a\u98ce \u301b\u213c\u250a' },
+  { handle: '@aqnts131726',   displayName: 'Aqnts',    text: '\u250b\u2127\u301a \u96fe\u6f2b\u5f52\u7a0b\u4f34\u6e05\u6b22 \u301b\u2118\u250a' },
+  { handle: '@aqnts131726',   displayName: 'Aqnts',    text: '\u2130\u250a\u3018 \u6e05\u5ead\u85cf\u96fe\u5fc6\u6e05\u6b22 \u3019\u2124\u250b' },
+  { handle: '@xpvugqor30410', displayName: 'Xpvugqor', text: '\uFFFD\uD83C\uDF39\uFFFD\u25D9\u70F9\u7F8A\u5BB0\u725B\u4E14\u4E3A\u4E50\u25D9\uD83E\uDD69' },
+  { handle: '@Lguha340054',   displayName: 'Lguha',    text: '\uFFFD\uD83C\uDF39\uFFFD\u2668\u5C0F\u65F6\u4E0D\u8BC6\u6708\u61F5\u61C2\u2668\uD83C\uDF19' },
+];
+for (const t of DECORATED_CJK_BOTS) {
+  assertDetected(t.handle, t, 0.90);
 }
 
 // ═══════════════════════════════════════════════════════════════
