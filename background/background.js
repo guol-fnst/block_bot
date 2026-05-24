@@ -1999,12 +1999,16 @@ async function startAnalysisForTab(tabId, overrides = {}) {
       return;
     }
 
-    // 过滤出新用户（未扫描过的）
-    const tweets = filterNewUsers(tabId, allTweets);
-    const skippedCount = allTweets.length - tweets.length;
-    
+    const aiAvailable = canUseAiProvider(cfg);
+
+    // For AI analysis: skip already-analyzed users to avoid expensive re-calls.
+    // For local-only analysis: always re-run local rules on ALL tweets so that
+    // bots missed in a previous run (before rule improvements) are still caught.
+    const tweets = aiAvailable ? filterNewUsers(tabId, allTweets) : allTweets;
+    const skippedCount = aiAvailable ? (allTweets.length - tweets.length) : 0;
+
     if (tweets.length === 0) {
-      // 全部都是已扫描用户
+      // All users already analyzed — only reachable in AI mode.
       await setAnalysisState(tabId, {
         status: 'empty',
         scannedTweetCount: allTweets.length,
@@ -2016,8 +2020,6 @@ async function startAnalysisForTab(tabId, overrides = {}) {
       });
       return;
     }
-
-    const aiAvailable = canUseAiProvider(cfg);
     await setAnalysisState(tabId, {
       status: 'running',
       scannedTweetCount: allTweets.length,
@@ -2074,9 +2076,13 @@ async function startAnalysisForTab(tabId, overrides = {}) {
 
     const newCandidates = normalizeCandidates(results, cfg.spamConfidenceThreshold);
 
-    // 将已分析的用户加到缓存（包括本地预过滤和 LLM 分析的）
-    const analyzedHandles = tweets.map(t => t.handle);
-    addScannedUserHandles(tabId, analyzedHandles);
+    // Only cache analyzed handles for AI mode to avoid re-sending the same users
+    // to the (expensive) AI model.  Local-only mode always re-analyzes all tweets
+    // so that bots missed by older rules are caught after a rule update.
+    if (aiAvailable) {
+      const analyzedHandles = tweets.map(t => t.handle);
+      addScannedUserHandles(tabId, analyzedHandles);
+    }
 
     // 与上次分析结果合并，避免多次点击只保留最新一批结果
     const prevState = await getAnalysisState(tabId);
