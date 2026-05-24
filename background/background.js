@@ -1743,6 +1743,39 @@ function addJokeTemplateClusterResults(tweets, results) {
       ]));
     });
   });
+
+  // Emoji-decorated short English phrase cluster:
+  // 3+ accounts with random handles posting short inspirational phrases wrapped in emoji/symbols.
+  // Catches bots like @dqikco32633, @ansqyfgo458, @Hralx284483 etc. that per-tweet rules may miss
+  // when the emoji count or symbol count is borderline.
+  const phraseItems = [];
+  (tweets || []).forEach(tweet => {
+    const key = String(tweet?.handle || '').toLowerCase();
+    if (!key || resultHandles.has(key)) return;
+    if (!looksLikeRandomHandle(tweet?.handle)) return;
+    const text = String(tweet?.text || '').trim();
+    const words = text.match(/[a-zA-Z]{2,}/g) || [];
+    if (words.length < 4 || words.length > 13) return;
+    // The text must contain decoration beyond plain English (emoji, symbols, or non-ASCII).
+    const englishLen = words.join('').length;
+    const totalLen = text.replace(/\s/g, '').length;
+    if (totalLen === 0 || englishLen / totalLen > 0.88) return;
+    // Require at least some emoji or decorative signals
+    if (countEmojiChars(text) < 3 && !hasDecorativeTemplateSignal(text)) return;
+    phraseItems.push(tweet);
+  });
+  const phraseHandles = new Set(phraseItems.map(t => String(t?.handle || '').toLowerCase()).filter(Boolean));
+  if (phraseHandles.size >= 3) {
+    phraseItems.forEach(tweet => {
+      const key = String(tweet?.handle || '').toLowerCase();
+      if (!key || resultHandles.has(key)) return;
+      resultHandles.add(key);
+      results.push(buildLocalRuleHit(tweet, 0.93, [
+        `emoji-decorated short English phrase bot cluster (${phraseHandles.size} accounts)`,
+        'matched without AI'
+      ]));
+    });
+  }
 }
 
 // Detect copy-paste/auto-reply patterns: accounts with near-identical messages
@@ -1984,19 +2017,24 @@ async function startAnalysisForTab(tabId, overrides = {}) {
       return;
     }
 
+    const aiAvailable = canUseAiProvider(cfg);
     await setAnalysisState(tabId, {
       status: 'running',
       scannedTweetCount: allTweets.length,
       candidates: [],
       error: '',
-      progressText: `已采集 ${allTweets.length} 条，正在分析 ${tweets.length} 个新用户${skippedCount > 0 ? `（跳过 ${skippedCount} 个已分析用户）` : ''}…`,
+      progressText: aiAvailable
+        ? `已采集 ${allTweets.length} 条，正在分析 ${tweets.length} 个新用户${skippedCount > 0 ? `（跳过 ${skippedCount} 个已分析用户）` : ''}…`
+        : `已采集 ${allTweets.length} 条，正在本地规则扫描 ${tweets.length} 个用户${skippedCount > 0 ? `（跳过 ${skippedCount} 个已分析用户）` : ''}…`,
       sourceUrl: analysisSourceUrl,
       autoQueued: false
     });
+    // Yield to the event loop so the popup's 900 ms poll can see the progress message
+    // before synchronous local-rule processing blocks the thread.
+    await sleep(0);
 
     const prefilter = splitObviousBotReplies(tweets, cfg.obviousBotKeywords);
     const results = prefilter.localResults.slice();
-    const aiAvailable = canUseAiProvider(cfg);
 
     addCoordinatedLocalRuleResults(tweets, results, cfg.obviousBotKeywords);
     addJokeTemplateClusterResults(tweets, results);
@@ -2019,16 +2057,19 @@ async function startAnalysisForTab(tabId, overrides = {}) {
       detectAutoReplyBots(prefilter.modelTweets, modelResults);
     }
 
-    if (prefilter.modelTweets.length > 0 && !aiAvailable) {
+    if (!aiAvailable) {
+      // Always show local-only completion status so the popup displays a meaningful
+      // progress message while normalizeCandidates / storage merging runs.
       await setAnalysisState(tabId, {
         status: 'running',
         scannedTweetCount: allTweets.length,
         candidates: [],
         error: '',
-        progressText: `已采集 ${allTweets.length} 条；AI 未启用，已用本地规则分析 ${tweets.length} 个用户`,
+        progressText: `已采集 ${allTweets.length} 条；本地规则完成，发现 ${results.length} 个疑似账号`,
         sourceUrl: analysisSourceUrl,
         autoQueued: false
       });
+      await sleep(0);
     }
 
     const newCandidates = normalizeCandidates(results, cfg.spamConfidenceThreshold);
