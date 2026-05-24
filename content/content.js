@@ -23,10 +23,13 @@
     return n;
   }
 
-  function getThreadAuthorHandleFromUrl() {
-    const m = window.location.pathname.match(/^\/([^/]+)\/status\/\d+/i);
-    if (!m || !m[1]) return '';
-    return `@${decodeURIComponent(m[1]).toLowerCase()}`;
+  function getThreadContextFromUrl() {
+    const m = window.location.pathname.match(/^\/([^/]+)\/status\/(\d+)/i);
+    if (!m || !m[1] || !m[2]) return null;
+    return {
+      authorHandle: `@${decodeURIComponent(m[1]).toLowerCase()}`,
+      statusId: m[2]
+    };
   }
 
   function isLikelyHandleSlug(slug) {
@@ -64,7 +67,7 @@
     return /default_profile|default_profile_images|profile_images\/default/i.test(String(src || ''));
   }
 
-  function parseTweetFromArticle(article, threadAuthorHandle) {
+  function parseTweetFromArticle(article, threadContext) {
     // 改善1: 过滤广告推文（Promoted Tweets），避免误判广告主账号
     if (article.querySelector('[data-testid="placementTracking"]')) return null;
 
@@ -96,7 +99,6 @@
     if (!handleSlug) return null;
 
     const handle = `@${handleSlug}`;
-    if (threadAuthorHandle && handle.toLowerCase() === threadAuthorHandle) return null;
 
     let displayName = '';
     if (userNameBlock) {
@@ -117,6 +119,14 @@
     const tweetUrl = statusPath ? `https://x.com${statusPath}` : '';
     const tweetIdMatch = statusPath.match(/\/status\/(\d+)/);
     const tweetId = tweetIdMatch ? tweetIdMatch[1] : '';
+    if (
+      threadContext &&
+      tweetId &&
+      handle.toLowerCase() === threadContext.authorHandle &&
+      tweetId === threadContext.statusId
+    ) {
+      return null;
+    }
     const avatarImg = article.querySelector('[data-testid="Tweet-User-Avatar"] img, [data-testid*="UserAvatar"] img');
     const avatarSrc = avatarImg ? avatarImg.getAttribute('src') || '' : '';
 
@@ -135,13 +145,13 @@
     };
   }
 
-  function collectVisibleTweets(threadAuthorHandle) {
+  function collectVisibleTweets(threadContext) {
     const articles = document.querySelectorAll('article[data-testid="tweet"]');
     const map = new Map();
 
     articles.forEach(article => {
       try {
-        const parsed = parseTweetFromArticle(article, threadAuthorHandle);
+        const parsed = parseTweetFromArticle(article, threadContext);
         if (!parsed) return;
         if (!map.has(parsed.uniqueId)) {
           map.set(parsed.uniqueId, parsed);
@@ -198,6 +208,37 @@
       );
     }
     return root.scrollTop || 0;
+  }
+
+  function getScrollMetrics(root) {
+    if (!root || root === document.documentElement || root === document.body || root === document.scrollingElement) {
+      const top = Math.max(
+        window.scrollY || 0,
+        document.documentElement?.scrollTop || 0,
+        document.body?.scrollTop || 0
+      );
+      const clientHeight = window.innerHeight || document.documentElement?.clientHeight || document.body?.clientHeight || 0;
+      const scrollHeight = Math.max(
+        document.documentElement?.scrollHeight || 0,
+        document.body?.scrollHeight || 0
+      );
+      return {
+        top,
+        clientHeight,
+        scrollHeight,
+        maxTop: Math.max(0, scrollHeight - clientHeight)
+      };
+    }
+
+    const top = root.scrollTop || 0;
+    const clientHeight = root.clientHeight || 0;
+    const scrollHeight = root.scrollHeight || 0;
+    return {
+      top,
+      clientHeight,
+      scrollHeight,
+      maxTop: Math.max(0, scrollHeight - clientHeight)
+    };
   }
 
   function scrollRootTo(root, top) {
@@ -306,7 +347,7 @@
     return false;
   }
 
-  async function collectTweetsWithAutoScroll(threadAuthorHandle, scrapeConfig = {}) {
+  async function collectTweetsWithAutoScroll(threadContext, scrapeConfig = {}) {
     const restore = disableScraping();
     try {
       const maxTweets = normalizeInt(scrapeConfig.maxTweets, 20, 5000, DEFAULT_SCRAPE_MAX_TWEETS);
@@ -322,43 +363,49 @@
       const merged = new Map();
       let stagnantRounds = 0;
       let lastSize = 0;
-      let lastHeight = 0;
+      let lastScrollTop = -1;
 
       for (let i = 0; i < maxRounds; i++) {
-        const visible = collectVisibleTweets(threadAuthorHandle);
+        const visible = collectVisibleTweets(threadContext);
         mergeTweetsIntoMap(merged, visible);
         if (merged.size >= maxTweets) break;
 
         const currentSize = merged.size;
-        const currentHeight = document.body.scrollHeight;
+        const root = getPreferredScrollRoot();
+        const metrics = getScrollMetrics(root);
+        const movedSinceLastRound = lastScrollTop < 0 ? true : (metrics.top - lastScrollTop) > 24;
+        const nearBottom = metrics.top >= (metrics.maxTop - Math.max(80, Math.round(metrics.clientHeight * 0.12)));
         // 只按内容数量判断停滞，不依赖页面高度：
         // X 的虚拟滚动会在底部添加新推文的同时删除顶部旧推文，
         // 导致 scrollHeight 几乎不变，用高度检测会过早停止。
-        if (currentSize <= lastSize) {
+        if (currentSize <= lastSize && (!movedSinceLastRound || nearBottom)) {
           stagnantRounds += 1;
         } else {
           stagnantRounds = 0;
         }
         lastSize = currentSize;
-        lastHeight = currentHeight;
+        lastScrollTop = metrics.top;
 
         // 需要连续 4 轮无变化才停止，避免网络延迟导致误判停滞
         if (stagnantRounds >= stagnantLimit) {
           // 额外等待一次再确认，防止网络慢时漏采
           await sleep(confirmWaitMs);
-          const afterWait = collectVisibleTweets(threadAuthorHandle);
+          const afterWait = collectVisibleTweets(threadContext);
           mergeTweetsIntoMap(merged, afterWait);
           if (merged.size >= maxTweets) break;
-          if (merged.size <= lastSize && document.body.scrollHeight <= lastHeight + 10) {
+          const confirmMetrics = getScrollMetrics(getPreferredScrollRoot());
+          const stillNearBottom = confirmMetrics.top >= (confirmMetrics.maxTop - Math.max(80, Math.round(confirmMetrics.clientHeight * 0.12)));
+          const hardlyMoved = Math.abs(confirmMetrics.top - lastScrollTop) <= 24;
+          if (merged.size <= lastSize && (stillNearBottom || hardlyMoved)) {
             break;
           }
           // 有新推文，重置停滞计数继续滚动
           stagnantRounds = 0;
           lastSize = merged.size;
-          lastHeight = document.body.scrollHeight;
+          lastScrollTop = confirmMetrics.top;
         }
 
-        scrollRootBy(getPreferredScrollRoot(), Math.max(window.innerHeight * 0.9, 800));
+        scrollRootBy(root, Math.max(window.innerHeight * 0.9, 800));
         // 增量采集场景下可以稍快一些，停滞时会自动回到完整等待。
         const waitNextMs = stagnantRounds > 0 ? waitMs : Math.max(600, Math.round(waitMs * 0.82));
         await sleep(waitNextMs);
@@ -367,7 +414,7 @@
       // 最终再滚动一次并等待，确保末尾推文不遗漏
       scrollRootBy(getPreferredScrollRoot(), Math.max(window.innerHeight * 1.2, 1000));
       await sleep(confirmWaitMs);
-      mergeTweetsIntoMap(merged, collectVisibleTweets(threadAuthorHandle));
+      mergeTweetsIntoMap(merged, collectVisibleTweets(threadContext));
       return Array.from(merged.values()).slice(0, maxTweets).map(({ uniqueId, ...tweet }) => tweet);
     } finally {
       restore();
@@ -376,12 +423,12 @@
 
   // ── Tweet scraping ───────────────────────────────────────────────────────────
   async function scrapeTweets(scrapeConfig = {}) {
-    const threadAuthorHandle = getThreadAuthorHandleFromUrl();
+    const threadContext = getThreadContextFromUrl();
     const initialWaitMs = normalizeInt(scrapeConfig.initialWaitMs, 1500, 15000, 9000);
     await waitForInitialTweetNodes(initialWaitMs);
     // 所有页面都启用自动滚动采集，而不只是帖子详情页
     // 这样在主页、博主主页、搜索结果页都能一次采集完毕
-    return collectTweetsWithAutoScroll(threadAuthorHandle, scrapeConfig);
+    return collectTweetsWithAutoScroll(threadContext, scrapeConfig);
   }
 
   // ── Message listener ─────────────────────────────────────────────────────────

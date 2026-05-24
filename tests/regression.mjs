@@ -409,6 +409,14 @@ assertDetected('@MarkNewtnCMT1',
 assertDetected('@elonmuskchats09',
   { handle: '@elonmuskchats09', displayName: 'Mr. Musk', text: 'y\u6bd4\u5979\u597d\u770b\u7684\u6ca1\u5979\u9a9a\uD83E\uDD24\u6bd4\u5979\u9a9a\u7684\u6ca1\u5979\u597d\u770b' }, 0.9);
 
+section('detectObviousBotReply — long decorative inspirational bots');
+assertDetected('@Yaekn131039',
+  { handle: '@Yaekn131039', displayName: 'Yaekn', text: '\u22c6\ua9bf\ud83c\udf42\ua673\u0f18\u26f8\ufe0f Even gloomy cloudy rainy days become warm once we have a nice casual chat together slowly. \u0f18\u26ec\ua9bf\u0f18\u22c6 \ud83c\udf6c \ud83c\udf44 \ud83d\udd25 \ud83d\ude80' }, 0.9);
+assertDetected('@blrnav22485',
+  { handle: '@blrnav22485', displayName: 'Blrnav', text: '\ua9bf\ud83c\udf37\u0f18\u22c6\u26f1\ufe0f Sincere communication is the most precious bridge that connects two hearts across the distance. \u0f18\ud83d\udcab\ua9bf\u0f18\u22c6 \ud83c\udf08 \ud83e\ude90 \ud83d\udd25 \ud83c\udf41' }, 0.9);
+assertDetected('@Wyzeb140374',
+  { handle: '@Wyzeb140374', displayName: 'Wyzeb', text: '\ua9bf\ud83c\udf43\u0f18\u22c6\u26f8\ufe0f Treasure every person who is willing to spend free time listening carefully to your inner voice. \u0f18\u2698\ua9bf\u0f18\u22c6 \ud83d\ude80 \ud83c\udf42' }, 0.9);
+
 // Summary
 // ═══════════════════════════════════════════════════════════════
 console.log('\n' + '═'.repeat(55));
