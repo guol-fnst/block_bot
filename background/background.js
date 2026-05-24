@@ -1445,6 +1445,35 @@ function hasDecorativeTemplateSignal(text) {
   );
 }
 
+function countEmojiChars(text) {
+  return (String(text || '').match(/[\p{Extended_Pictographic}\uFE0F]/gu) || []).length;
+}
+
+function hasEmojiBurst(text, minCount = 5) {
+  return countEmojiChars(text) >= minCount;
+}
+
+function getEnglishJokeTemplateFamily(text) {
+  const raw = String(text || '').trim();
+  if (!raw) return '';
+
+  const compact = stripEmojiLikeChars(raw)
+    .replace(/[“”‘’]/g, "'")
+    .replace(/[—–]/g, '-')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .toLowerCase();
+
+  if (!compact || compact.length < 24) return '';
+
+  if (/^why did [^?]{2,90}\?\s+.{6,220}$/.test(compact)) return 'why-did';
+  if (/^i tried to .{4,140}[.!?]\s*i .{4,180}$/.test(compact)) return 'i-tried-to';
+  if (/^what do you call .{2,120}\?\s+.{4,200}$/.test(compact)) return 'what-do-you-call';
+  if (/^my .{2,80} said .{2,140}[.!?]\s+.{4,180}$/.test(compact)) return 'my-said';
+
+  return '';
+}
+
 function buildLocalRuleHit(tweet, confidence, reasons) {
   return {
     handle: String(tweet?.handle || ''),
@@ -1476,6 +1505,8 @@ function detectObviousBotReply(tweet, customKeywords = []) {
   const lowInfoText = stripEmojiLikeChars(text).length <= 8;
   const defaultAvatar = Boolean(tweet?.defaultProfileImage);
   const decorativeTemplate = hasDecorativeTemplateSignal(text);
+  const jokeTemplateFamily = getEnglishJokeTemplateFamily(text);
+  const emojiBurst = hasEmojiBurst(text, 5);
 
   if (adultName) reasons.push('display name or handle contains adult/spam lure keywords');
   if (cloudDrivePromo) reasons.push('reply text contains cloud-drive promo link keywords');
@@ -1488,6 +1519,8 @@ function detectObviousBotReply(tweet, customKeywords = []) {
   if (lowEntropy) reasons.push('profile text has low-entropy/generated-looking pattern');
   if (defaultAvatar) reasons.push('account appears to use a default profile image');
   if (decorativeTemplate) reasons.push('reply text looks like a decorative template bot message');
+  if (jokeTemplateFamily) reasons.push(`reply text matches repetitive english joke template (${jokeTemplateFamily})`);
+  if (emojiBurst) reasons.push('reply text has unusually dense emoji decoration');
 
   if (cloudDrivePromo) {
     return buildLocalRuleHit(tweet, 0.96, reasons);
@@ -1503,6 +1536,14 @@ function detectObviousBotReply(tweet, customKeywords = []) {
 
   if (suspiciousPromoText && lowInfoText) {
     return buildLocalRuleHit(tweet, 0.9, reasons);
+  }
+
+  if (randomHandle && jokeTemplateFamily && emojiBurst) {
+    return buildLocalRuleHit(tweet, 0.96, reasons);
+  }
+
+  if (jokeTemplateFamily && emojiBurst && (randomHandle || lowEntropy || decorativeTemplate)) {
+    return buildLocalRuleHit(tweet, 0.93, reasons);
   }
 
   if (randomHandle && decorativeTemplate) {
@@ -1628,6 +1669,41 @@ function addCoordinatedLocalRuleResults(tweets, results, customKeywords = []) {
       ]));
     });
   }
+}
+
+function addJokeTemplateClusterResults(tweets, results) {
+  if (!Array.isArray(tweets) || tweets.length < 3) return;
+
+  const resultHandles = new Set(
+    (results || [])
+      .map(r => String(r?.handle || '').toLowerCase())
+      .filter(Boolean)
+  );
+
+  const families = new Map();
+  (tweets || []).forEach(tweet => {
+    const family = getEnglishJokeTemplateFamily(tweet?.text);
+    if (!family) return;
+    if (!looksLikeRandomHandle(tweet?.handle)) return;
+    if (!hasEmojiBurst(tweet?.text, 4)) return;
+    if (!families.has(family)) families.set(family, []);
+    families.get(family).push(tweet);
+  });
+
+  families.forEach((items, family) => {
+    const uniqueHandles = new Set(items.map(t => String(t?.handle || '').toLowerCase()).filter(Boolean));
+    if (uniqueHandles.size < 3) return;
+
+    items.forEach(tweet => {
+      const key = String(tweet?.handle || '').toLowerCase();
+      if (!key || resultHandles.has(key)) return;
+      resultHandles.add(key);
+      results.push(buildLocalRuleHit(tweet, 0.95, [
+        `clustered english joke-template replies (${family}) across ${uniqueHandles.size} random handles`,
+        'matched without AI'
+      ]));
+    });
+  });
 }
 
 // Detect copy-paste/auto-reply patterns: accounts with near-identical messages
@@ -1884,6 +1960,7 @@ async function startAnalysisForTab(tabId, overrides = {}) {
     const aiAvailable = canUseAiProvider(cfg);
 
     addCoordinatedLocalRuleResults(tweets, results, cfg.obviousBotKeywords);
+    addJokeTemplateClusterResults(tweets, results);
 
     if (prefilter.modelTweets.length > 0 && aiAvailable) {
       const modelResults = await analyzeTweetsOptimized(prefilter.modelTweets, cfg, async (done, total) => {
@@ -2115,6 +2192,7 @@ async function performDeepScan(cfg) {
     let results = [...prefilter.localResults];
     const aiAvailable = canUseAiProvider(cfg);
     addCoordinatedLocalRuleResults(filteredReplies, results, cfg.obviousBotKeywords);
+    addJokeTemplateClusterResults(filteredReplies, results);
 
     if (prefilter.modelTweets.length > 0 && aiAvailable) {
       const modelResults = await analyzeTweetsOptimized(prefilter.modelTweets, cfg);
