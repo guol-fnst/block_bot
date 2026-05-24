@@ -1487,17 +1487,33 @@ function hasMathSymbolPrefix(text) {
  */
 function hasObscureScriptDecoration(text) {
   const raw = String(text || '').trim();
-  // Need at least 4 characters from the target script blocks
-  if ((raw.match(/[\uA000-\uABFF]/gu) || []).length < 4) return false;
-  // Must accompany a short English phrase (not pure script-language content)
+  if (!raw) return false;
+
+  const obscureMatches = raw.match(/[\uA000-\uABFF]/gu) || [];
+  if (obscureMatches.length < 4) return false;
+
   const words = raw.match(/[a-zA-Z]{2,}/g) || [];
   if (words.length < 4 || words.length > 14) return false;
-  // English letters must not dominate — decoration must be substantial
+
+  const firstWord = raw.match(/[a-zA-Z]{2,}/);
+  if (!firstWord) return false;
+
+  const allWords = Array.from(raw.matchAll(/[a-zA-Z]{2,}/g));
+  const lastWord = allWords[allWords.length - 1];
+  const firstWordIndex = firstWord.index || 0;
+  const lastWordEnd = (lastWord.index || 0) + lastWord[0].length;
+
+  const prefix = raw.slice(0, firstWordIndex);
+  const suffix = raw.slice(lastWordEnd);
+  const prefixObscure = (prefix.match(/[\uA000-\uABFF]/gu) || []).length;
+  const suffixObscure = (suffix.match(/[\uA000-\uABFF]/gu) || []).length;
+  if (prefixObscure < 2 || suffixObscure < 2) return false;
+
   const englishLen = words.join('').length;
   const totalLen = raw.replace(/\s/g, '').length;
-  if (totalLen === 0 || englishLen / totalLen > 0.82) return false;
-  // Require at least 1 emoji to distinguish from legitimate multilingual text
-  return countEmojiChars(raw) >= 1;
+  if (totalLen === 0 || englishLen / totalLen > 0.86) return false;
+
+  return true;
 }
 
 /**
@@ -2762,7 +2778,6 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
     })
     .catch(() => {});
 });
-
 /**
  * 监听 tab 关闭，清空缓存并释放并发槽
  */
@@ -3001,3 +3016,4 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     return false;
   }
 });
+

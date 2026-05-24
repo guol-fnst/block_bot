@@ -311,16 +311,18 @@ assert('Rejang-wrapped \u201cKeep your heart light\u201d (5 emoji)',
   hasObscureScriptDecoration('\uA956\uA9C5\u301A\uAA5C\uA734 Keep your heart light and free \uA957\u301B\uAA9C\uAA5D\uA9C6 \uD83C\uDF42 \uD83E\uDDF3 \uD83C\uDEEC \uD83C\uDF3A \uD83D\uDCBC'), true);
 assert('Cham-wrapped \u201cGrow stronger\u201d (only 2 emoji)',
   hasObscureScriptDecoration('\u29D5\uAA59\uAA5A\uAA5B\uAA76\uAA77\uAA77 Grow stronger little by little each day \uA6A8\uAA69\uAA6A\uAA5A\uAA5B\uAA5C\u29D6 \uD83C\uDEEC \uD83C\uDF31'), true);
+assert('Pcbgqtvw-style wrapped \u201cAccept change\u201d (4 obscure chars total)',
+  hasObscureScriptDecoration('\u22C6\uA9BF\uA673\u0F18 Accept change embrace new blessings. \uA673\uA9BF\u0F18\u22C6'), true);
 // Should NOT fire
 assert('plain English with emoji (no obscure chars)',
   hasObscureScriptDecoration('Keep exploring the beautiful world \uD83C\uDF44 \uD83C\uDF89'), false);
 assert('only 3 obscure chars (below threshold)',
   hasObscureScriptDecoration('\uAA44\uAA45\uAA46 Keep your heart light and free \uD83C\uDF31'), false);
-assert('no emoji (fails emoji requirement)',
-  hasObscureScriptDecoration('\uAA44\uAA45\uAA46\uAA47 Keep your heart light and free \uAA48\uAA49\uAA4A\uAA4B'), false);
+assert('no emoji but wrapped on both sides still counts',
+  hasObscureScriptDecoration('\uAA44\uAA45\uAA46\uAA47 Keep your heart light and free \uAA48\uAA49\uAA4A\uAA4B'), true);
 assert('too few English words (< 4)',
   hasObscureScriptDecoration('\uAA44\uAA45\uAA46\uAA47 Hi \uAA48 \uD83C\uDF31'), false);
-assert('English dominates (ratio > 0.82)',
+assert('English dominates (ratio > 0.86)',
   hasObscureScriptDecoration('\uAA44\uAA45\uAA46\uAA47 The quick brown fox jumps over the lazy dog and then runs away \uD83C\uDF31'), false);
 
 // ═══════════════════════════════════════════════════════════════
@@ -336,6 +338,7 @@ const OBSCURE_SCRIPT_BOTS = [
   { handle: '@peacelovejoy',   displayName: 'Peace',      text: '\uA956\uA9C5\u301A\uAA5C\uA734 Keep your heart light and free \uA957\u301B\uAA9C\uAA5D\uA9C6 \uD83C\uDF42 \uD83E\uDDF3 \uD83C\uDEEC \uD83C\uDF3A \uD83D\uDCBC' },
   // Only 2 emoji — relies solely on obscureScriptDeco (not emojiDecoratedPhrase)
   { handle: '@DailyWisdomX',   displayName: 'DailyWisdom', text: '\u29D5\uAA59\uAA5A\uAA5B\uAA76\uAA77\uAA77 Grow stronger little by little each day \uA6A8\uAA69\uAA6A\uAA5A\uAA5B\uAA5C\u29D6 \uD83C\uDEEC \uD83C\uDF31' },
+  { handle: '@pcbgqtvw1448',   displayName: 'Pcbgqtvw',    text: '\u22C6\uA9BF\uA673\u0F18 Accept change embrace new blessings. \uA673\uA9BF\u0F18\u22C6' },
 ];
 for (const t of OBSCURE_SCRIPT_BOTS) {
   assertDetected(t.handle, t, 0.85);
