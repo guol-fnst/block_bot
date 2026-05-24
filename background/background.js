@@ -1474,6 +1474,33 @@ function hasMathSymbolPrefix(text) {
 }
 
 /**
+ * Returns true when the text contains 4+ characters from obscure Unicode script blocks
+ * (U+A000–U+ABFF: Yi, Lisu, Vai, Bamum Supplement, Kayah Li, Rejang, Javanese, Myanmar
+ * Extended-B, Cham, Myanmar Extended-A, Tai Viet, Meetei Mayek, etc.) combined with a
+ * short generic English phrase and at least one emoji.
+ *
+ * Spam bots use these scripts as visual "wrapper" decoration around a 4-14 word English
+ * inspirational/generic sentence, e.g.:
+ *   ⧒ꩄꩅꩆꚨꩩꩩ Keep exploring the beautiful big world outside ꩪꩫꩬꩅꩆꩇ⧓ 💦🎉💼
+ *   〝ꨬꨭꨮꩨꩩ Every child writes their own beautiful life story ꩪꩫꩬꨭꨮꨯ〞 🌐🔥
+ *   ⧕꩙꩚꩛ꩶ꩷꩷ Grow stronger little by little each day ꚨꩩꩪ꩚꩛꩜⧖ 🎌🌱
+ */
+function hasObscureScriptDecoration(text) {
+  const raw = String(text || '').trim();
+  // Need at least 4 characters from the target script blocks
+  if ((raw.match(/[\uA000-\uABFF]/gu) || []).length < 4) return false;
+  // Must accompany a short English phrase (not pure script-language content)
+  const words = raw.match(/[a-zA-Z]{2,}/g) || [];
+  if (words.length < 4 || words.length > 14) return false;
+  // English letters must not dominate — decoration must be substantial
+  const englishLen = words.join('').length;
+  const totalLen = raw.replace(/\s/g, '').length;
+  if (totalLen === 0 || englishLen / totalLen > 0.82) return false;
+  // Require at least 1 emoji to distinguish from legitimate multilingual text
+  return countEmojiChars(raw) >= 1;
+}
+
+/**
  * Returns true when the text is a short English phrase (4–13 words)
  * sandwiched inside heavy emoji/symbol decoration — the hallmark of
  * inspirational-quote bot accounts like @ansqyfgo458, @Hralx284483 etc.
@@ -1555,6 +1582,7 @@ function detectObviousBotReply(tweet, customKeywords = []) {
   const emojiBurst = hasEmojiBurst(text, 5);
   const emojiDecoratedPhrase = hasEmojiDecoratedShortEnglishPhrase(text);
   const mathPrefix = hasMathSymbolPrefix(text);
+  const obscureScriptDeco = hasObscureScriptDecoration(text);
 
   if (adultName) reasons.push('display name or handle contains adult/spam lure keywords');
   if (cloudDrivePromo) reasons.push('reply text contains cloud-drive promo link keywords');
@@ -1571,6 +1599,7 @@ function detectObviousBotReply(tweet, customKeywords = []) {
   if (emojiBurst) reasons.push('reply text has unusually dense emoji decoration');
   if (emojiDecoratedPhrase) reasons.push('reply text is a short english phrase wrapped in emoji decoration');
   if (mathPrefix) reasons.push('text starts with math/unicode-operator symbol prefix (bot decoration pattern)');
+  if (obscureScriptDeco) reasons.push('text wraps English phrase in obscure Unicode script characters (bot decoration)');  
 
   if (cloudDrivePromo) {
     return buildLocalRuleHit(tweet, 0.96, reasons);
@@ -1604,12 +1633,22 @@ function detectObviousBotReply(tweet, customKeywords = []) {
     return buildLocalRuleHit(tweet, 0.93, reasons);
   }
 
+  if (randomHandle && obscureScriptDeco) {
+    return buildLocalRuleHit(tweet, 0.93, reasons);
+  }
+
   if (randomHandle && decorativeTemplate) {
     return buildLocalRuleHit(tweet, 0.92, reasons);
   }
 
   // Standalone: emoji-decorated phrase is strong enough even without confirmed random handle
   if (emojiDecoratedPhrase && emojiBurst) {
+    return buildLocalRuleHit(tweet, 0.88, reasons);
+  }
+
+  // Standalone: obscure-script-wrapped English phrase (e.g. Cham/Tai Viet/Javanese bots).
+  // Fires even without randomHandle because the text pattern alone is highly distinctive.
+  if (obscureScriptDeco) {
     return buildLocalRuleHit(tweet, 0.88, reasons);
   }
 
@@ -1784,8 +1823,8 @@ function addJokeTemplateClusterResults(tweets, results) {
     const englishLen = words.join('').length;
     const totalLen = text.replace(/\s/g, '').length;
     if (totalLen === 0 || englishLen / totalLen > 0.88) return;
-    // Require at least some emoji or decorative signals (math-symbol prefix also qualifies)
-    if (countEmojiChars(text) < 3 && !hasDecorativeTemplateSignal(text) && !hasMathSymbolPrefix(text)) return;
+    // Require at least some emoji or decorative signals
+    if (countEmojiChars(text) < 3 && !hasDecorativeTemplateSignal(text) && !hasMathSymbolPrefix(text) && !hasObscureScriptDecoration(text)) return;
     phraseItems.push(tweet);
   });
   const phraseHandles = new Set(phraseItems.map(t => String(t?.handle || '').toLowerCase()).filter(Boolean));

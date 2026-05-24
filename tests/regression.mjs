@@ -65,6 +65,7 @@ const {
   hasDecorativeTemplateSignal,
   hasEmojiDecoratedShortEnglishPhrase,
   hasMathSymbolPrefix,
+  hasObscureScriptDecoration,
   countEmojiChars,
   hasEmojiBurst,
   getEnglishJokeTemplateFamily,
@@ -297,9 +298,52 @@ section('addJokeTemplateClusterResults — math-prefix bot cluster');
   assert('all 5 math-prefix bots eventually flagged', handles.size, 5);
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════
+// 10. hasObscureScriptDecoration — Cham / Tai Viet / Rejang wrapped bots
+// ═══════════════════════════════════════════════════════════════
+section('hasObscureScriptDecoration');
+// Should fire for all 4 known bot tweet patterns
+assert('Cham-wrapped \u201cKeep exploring\u201d (5 emoji)',
+  hasObscureScriptDecoration('\u29D2\uAA44\uAA45\uAA46\uA6A8\uAA69\uAA69 Keep exploring the beautiful big world outside \uAA6A\uAA6B\uAA6C\uAA45\uAA46\uAA47\u29D3 \uD83D\uDCA6 \uD83C\uDF89 \uD83D\uDCBC \uD83D\uDC90 \uD83C\uDF44'), true);
+assert('Cham-wrapped \u201cEvery child writes\u201d (5 emoji)',
+  hasObscureScriptDecoration('\u301D\uAA2C\uAA2D\uAA2E\uAA68\uAA69 Every child writes their own beautiful life story \uAA6A\uAA6B\uAA6C\uAA2D\uAA2E\uAA2F\u301E \uD83C\uDF10 \uD83D\uDD25 \uD83C\uDF1E \uD83C\uDF8A \uD83C\uDF10'), true);
+assert('Rejang-wrapped \u201cKeep your heart light\u201d (5 emoji)',
+  hasObscureScriptDecoration('\uA956\uA9C5\u301A\uAA5C\uA734 Keep your heart light and free \uA957\u301B\uAA9C\uAA5D\uA9C6 \uD83C\uDF42 \uD83E\uDDF3 \uD83C\uDEEC \uD83C\uDF3A \uD83D\uDCBC'), true);
+assert('Cham-wrapped \u201cGrow stronger\u201d (only 2 emoji)',
+  hasObscureScriptDecoration('\u29D5\uAA59\uAA5A\uAA5B\uAA76\uAA77\uAA77 Grow stronger little by little each day \uA6A8\uAA69\uAA6A\uAA5A\uAA5B\uAA5C\u29D6 \uD83C\uDEEC \uD83C\uDF31'), true);
+// Should NOT fire
+assert('plain English with emoji (no obscure chars)',
+  hasObscureScriptDecoration('Keep exploring the beautiful world \uD83C\uDF44 \uD83C\uDF89'), false);
+assert('only 3 obscure chars (below threshold)',
+  hasObscureScriptDecoration('\uAA44\uAA45\uAA46 Keep your heart light and free \uD83C\uDF31'), false);
+assert('no emoji (fails emoji requirement)',
+  hasObscureScriptDecoration('\uAA44\uAA45\uAA46\uAA47 Keep your heart light and free \uAA48\uAA49\uAA4A\uAA4B'), false);
+assert('too few English words (< 4)',
+  hasObscureScriptDecoration('\uAA44\uAA45\uAA46\uAA47 Hi \uAA48 \uD83C\uDF31'), false);
+assert('English dominates (ratio > 0.82)',
+  hasObscureScriptDecoration('\uAA44\uAA45\uAA46\uAA47 The quick brown fox jumps over the lazy dog and then runs away \uD83C\uDF31'), false);
+
+// ═══════════════════════════════════════════════════════════════
+// 11. detectObviousBotReply — obscure-script-wrapped bots (standalone rule)
+// ═══════════════════════════════════════════════════════════════
+// Non-random-looking handles to verify the standalone obscureScriptDeco rule fires
+// without the randomHandle condition. Confidence should be ≥0.88.
+section('detectObviousBotReply \u2014 obscure-script-wrapped bots (standalone rule)');
+const OBSCURE_SCRIPT_BOTS = [
+  // handle doesn't look random — standalone rule must carry the detection
+  { handle: '@sunshine_fan',   displayName: 'Sunshine',   text: '\u29D2\uAA44\uAA45\uAA46\uA6A8\uAA69\uAA69 Keep exploring the beautiful big world outside \uAA6A\uAA6B\uAA6C\uAA45\uAA46\uAA47\u29D3 \uD83D\uDCA6 \uD83C\uDF89 \uD83D\uDCBC \uD83D\uDC90 \uD83C\uDF44' },
+  { handle: '@GrowthMindset',  displayName: 'Growth',     text: '\u301D\uAA2C\uAA2D\uAA2E\uAA68\uAA69 Every child writes their own beautiful life story \uAA6A\uAA6B\uAA6C\uAA2D\uAA2E\uAA2F\u301E \uD83C\uDF10 \uD83D\uDD25 \uD83C\uDF1E \uD83C\uDF8A \uD83C\uDF10' },
+  { handle: '@peacelovejoy',   displayName: 'Peace',      text: '\uA956\uA9C5\u301A\uAA5C\uA734 Keep your heart light and free \uA957\u301B\uAA9C\uAA5D\uA9C6 \uD83C\uDF42 \uD83E\uDDF3 \uD83C\uDEEC \uD83C\uDF3A \uD83D\uDCBC' },
+  // Only 2 emoji — relies solely on obscureScriptDeco (not emojiDecoratedPhrase)
+  { handle: '@DailyWisdomX',   displayName: 'DailyWisdom', text: '\u29D5\uAA59\uAA5A\uAA5B\uAA76\uAA77\uAA77 Grow stronger little by little each day \uA6A8\uAA69\uAA6A\uAA5A\uAA5B\uAA5C\u29D6 \uD83C\uDEEC \uD83C\uDF31' },
+];
+for (const t of OBSCURE_SCRIPT_BOTS) {
+  assertDetected(t.handle, t, 0.85);
+}
+
+// ═══════════════════════════════════════════════════════════════
 // Summary
-// ═══════════════════════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════
 console.log('\n' + '═'.repeat(55));
 console.log(`  Results: ${passed} passed, ${failed} failed`);
 console.log('═'.repeat(55));
