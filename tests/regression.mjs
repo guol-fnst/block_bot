@@ -67,6 +67,7 @@ const {
   hasMathSymbolPrefix,
   hasObscureScriptDecoration,
   hasDecoratedCjkBotPattern,
+  hasAdultLureShortCopy,
   countEmojiChars,
   hasEmojiBurst,
   getEnglishJokeTemplateFamily,
@@ -236,6 +237,8 @@ section('addJokeTemplateClusterResults — cluster does NOT fire for <3 accounts
 section('hasObviousBotKeyword');
 assertTruthy('炮友 in display name', hasObviousBotKeyword('炮友交友'));
 assertTruthy('找炮 in display name', hasObviousBotKeyword('找炮友'));
+assertTruthy('好涩 in display name', hasObviousBotKeyword('\u5979\u597d\u6da9\u2763\uFE0F\u6211\u4E0D\u884C\u4E86\uD83D\uDC49'));
+assertTruthy('第一骚 in display name', hasObviousBotKeyword('m\u63A8\u7279\uD83D\uDC93\u7B2C\u4E00\u9A9A'));
 assertFalsy('normal name',          hasObviousBotKeyword('John Smith'));
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -376,6 +379,36 @@ for (const t of DECORATED_CJK_BOTS) {
 }
 
 // ═══════════════════════════════════════════════════════════════
+section('detectObviousBotReply — adult display name + tiny fragment bots');
+assertDetected('@danitinahd',
+  { handle: '@danitinahd', displayName: '\u5979\u597d\u6da9\u2763\uFE0F\u6211\u4E0D\u884C\u4E86\uD83D\uDC49', text: 'f\u7948\u5E03\u51E1' }, 0.9);
+assertDetected('@elonmusk7pg',
+  { handle: '@elonmusk7pg', displayName: 'm\u63A8\u7279\uD83D\uDC93\u7B2C\u4E00\u9A9A', text: 'n' }, 0.9);
+
+section('hasAdultLureShortCopy');
+assertTruthy('line-offline adult lure copy',
+  hasAdultLureShortCopy('+\u7ebf\u4e0b\u6211\u5c31\u66f0\u8fc7\uD83D\uDC97\u8fd9\u4e2a\u9a9a\u8d27\uD83D\uDC49'));
+assertTruthy('homepage can do it lure copy',
+  hasAdultLureShortCopy('m\u5237\u4e86\u534a\u5929\u7684X\uD83E\uDD73\u5c31\u5979\u7684\u4e3b\u9875\u80fd\u6253\u2708\uFE0F\u4e86'));
+assertTruthy('too sexy lure copy',
+  hasAdultLureShortCopy('\u2764\uFE0F\u5979\u597d\u6da9\uD83E\uDD7A\u6211\u4e0d\u884c\u4e86\uD83D\uDC49'));
+assertTruthy('compare sexy lure copy',
+  hasAdultLureShortCopy('y\u6bd4\u5979\u597d\u770b\u7684\u6ca1\u5979\u9a9a\uD83E\uDD24\u6bd4\u5979\u9a9a\u7684\u6ca1\u5979\u597d\u770b'));
+assertFalsy('normal Chinese sentence should not trigger short-copy lure rule',
+  hasAdultLureShortCopy('\u4eca\u5929\u7684\u665a\u971e\u5f88\u597d\u770b\u6211\u60f3\u51fa\u53bb\u6563\u6b65'));
+
+section('detectObviousBotReply — adult lure short-copy bots');
+assertDetected('@trizha1018',
+  { handle: '@trizha1018', displayName: '\u6a80\u8574', text: '+\u7ebf\u4e0b\u6211\u5c31\u66f0\u8fc7\uD83D\uDC97\u8fd9\u4e2a\u9a9a\u8d27\uD83D\uDC49' }, 0.9);
+assertDetected('@chrisropp',
+  { handle: '@chrisropp', displayName: '\u53f0\u5929\u83f1', text: 'm\u5237\u4e86\u534a\u5929\u7684X\uD83E\uDD73\u5c31\u5979\u7684\u4e3b\u9875\u80fd\u6253\u2708\uFE0F\u4e86' }, 0.9);
+assertDetected('@chrisropp',
+  { handle: '@chrisropp', displayName: '\u53f0\u5929\u83f1', text: '\u2764\uFE0F\u5979\u597d\u6da9\uD83E\uDD7A\u6211\u4e0d\u884C\u4E86\uD83D\uDC49' }, 0.9);
+assertDetected('@MarkNewtnCMT1',
+  { handle: '@MarkNewtnCMT1', displayName: 'Mark Newton. CMT', text: '*\u5237\u4e86\u534a\u5929\u7684X\uD83E\uDD29\u5c31\u5979\u7684\u4e3b\u9875\u80fd\u6253\u2708\uFE0F\u4e86' }, 0.9);
+assertDetected('@elonmuskchats09',
+  { handle: '@elonmuskchats09', displayName: 'Mr. Musk', text: 'y\u6bd4\u5979\u597d\u770b\u7684\u6ca1\u5979\u9a9a\uD83E\uDD24\u6bd4\u5979\u9a9a\u7684\u6ca1\u5979\u597d\u770b' }, 0.9);
+
 // Summary
 // ═══════════════════════════════════════════════════════════════
 console.log('\n' + '═'.repeat(55));

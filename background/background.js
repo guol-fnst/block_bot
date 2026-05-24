@@ -1306,6 +1306,8 @@ const BUILT_IN_OBVIOUS_BOT_KEYWORDS = [
   'hookup',
   'porn',
   'nude',
+  '\u597d\u6da9',
+  '\u7b2c\u4e00\u9a9a',
   'casino',
   '夸克网盘',
   '夸克盘',
@@ -1321,6 +1323,15 @@ const LOCAL_RULE_SPAM_TEXT_PATTERNS = [
   /空投|白名单|领币|钱包|合约|私信|引流|返佣|博彩|投注|百家乐|真人荷官|电报群|飞机群|看主页|主页见|链接在简介/,
   /同城|附近|约炮|速配|上门|外围|裸聊|私房|包夜/,
   /今夜有空|今晚有空|想约|想月|找个.{0,4}主人|温柔主人|寂寞|陪聊|交友/
+];
+
+const ADULT_LURE_SHORTCOPY_PATTERNS = [
+  /\u7ebf\u4e0b\u6211\u5c31[\u66f0\u65e5]\u8fc7/u,
+  /\u5979\u597d\u6da9.*\u6211\u4e0d\u884c\u4e86/u,
+  /\u5237\u4e86\u534a\u5929\u7684x.*\u4e3b\u9875\u80fd\u6253/u,
+  /\u6bd4\u5979\u597d\u770b\u7684\u6ca1\u5979\u9a9a.*\u6bd4\u5979\u9a9a\u7684\u6ca1\u5979\u597d\u770b/u,
+  /\u8fd9\u4e2a\u9a9a\u8d27/u,
+  /\u4e3b\u9875\u80fd\u6253/u
 ];
 
 function hasCloudDrivePromoSignal(text, customKeywords = []) {
@@ -1413,6 +1424,16 @@ function isLowInfoMixedEmojiReply(text) {
 function hasSuspiciousPromoText(text) {
   const value = String(text || '');
   return LOCAL_RULE_SPAM_TEXT_PATTERNS.some(pattern => pattern.test(value));
+}
+
+function hasAdultLureShortCopy(text) {
+  const value = String(text || '');
+  if (!value) return false;
+
+  const compact = compactText(value).toLowerCase();
+  if (!compact || compact.length > 32) return false;
+
+  return ADULT_LURE_SHORTCOPY_PATTERNS.some(pattern => pattern.test(value));
 }
 
 function hasUrlLikeSignal(text) {
@@ -1623,6 +1644,7 @@ function detectObviousBotReply(tweet, customKeywords = []) {
   const emojiOnly = isEmojiOnlyOrEmojiNumberReply(text);
   const lowInfoMixed = isLowInfoMixedEmojiReply(text);
   const suspiciousPromoText = hasSuspiciousPromoText(text);
+  const adultLureShortCopy = hasAdultLureShortCopy(text);
   const urlLike = hasUrlLikeSignal(text);
   const lowEntropy = hasLowTextEntropy(handle) || hasLowTextEntropy(displayName);
   const lowInfoText = stripEmojiLikeChars(text).length <= 8;
@@ -1642,6 +1664,7 @@ function detectObviousBotReply(tweet, customKeywords = []) {
   if (emojiOnly) reasons.push('reply text is only emoji or emoji plus numbers');
   if (lowInfoMixed) reasons.push('reply text is emoji mixed with very short alnum fragments');
   if (suspiciousPromoText) reasons.push('reply text contains spam/scam promo wording');
+  if (adultLureShortCopy) reasons.push('reply text matches short adult-lure bot copy');
   if (urlLike) reasons.push('reply text contains external link or off-platform contact');
   if (lowEntropy) reasons.push('profile text has low-entropy/generated-looking pattern');
   if (defaultAvatar) reasons.push('account appears to use a default profile image');
@@ -1663,6 +1686,10 @@ function detectObviousBotReply(tweet, customKeywords = []) {
 
   if (suspiciousPromoText && (urlLike || adultName || randomHandle || lowEntropy)) {
     return buildLocalRuleHit(tweet, urlLike ? 0.94 : 0.9, reasons);
+  }
+
+  if (adultLureShortCopy) {
+    return buildLocalRuleHit(tweet, 0.93, reasons);
   }
 
   if (suspiciousPromoText && lowInfoText) {
