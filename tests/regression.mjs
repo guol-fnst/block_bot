@@ -64,6 +64,7 @@ const {
   looksLikeRandomHandle,
   hasDecorativeTemplateSignal,
   hasEmojiDecoratedShortEnglishPhrase,
+  hasMathSymbolPrefix,
   countEmojiChars,
   hasEmojiBurst,
   getEnglishJokeTemplateFamily,
@@ -250,6 +251,50 @@ section('normalizeCandidates');
   assert('passes conf≥0.8 bots only', out.length, 2);
   assert('bot1 selected (conf≥0.9)', out.find(r => r.handle === '@bot1')?.selected, true);
   assert('bot3 not selected (conf<0.9)', out.find(r => r.handle === '@bot3')?.selected, false);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 8. hasMathSymbolPrefix — math/unicode-operator prefix detection
+// ═══════════════════════════════════════════════════════════════════════════
+section('hasMathSymbolPrefix');
+assert('∂∇∂ prefix (U+2202 U+2207)',       hasMathSymbolPrefix('\u2202\u2207\u2202 Can you give me a discount?'), true);
+assert('⊗⊕⊖ prefix (U+2297 U+2295 U+2296)', hasMathSymbolPrefix('\u2297\u2295\u2296 I usually play it on Saturday afternoons.'), true);
+assert('⊕⊖⊗ prefix',                        hasMathSymbolPrefix('\u2295\u2296\u2297 Yes they are. They look very beautiful.'), true);
+assert('∪∩∈ prefix',                         hasMathSymbolPrefix('\u222A\u2229\u2208 I know that song.'), true);
+assert('// slash prefix',                    hasMathSymbolPrefix('// \u26A1 /\\ I like reading books.'), true);
+assert('/\\ slash prefix',                   hasMathSymbolPrefix('/\\ hello world'), true);
+// Should NOT fire
+assert('plain English text',                 hasMathSymbolPrefix('I love quiet cozy places.'), false);
+assert('single math char (only 1)',          hasMathSymbolPrefix('\u221E miles away'), false);
+assert('→ arrow (not in math op block)',     hasMathSymbolPrefix('\u2192 click here'), false);
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 9. detectObviousBotReply — math-prefix bot cluster (screenshot bots)
+// ═══════════════════════════════════════════════════════════════════════════
+section('detectObviousBotReply — math-symbol-prefix bots (new wave)');
+const MATH_PREFIX_BOTS = [
+  { handle: '@Pzthc162184',  displayName: 'Pzthc',    text: '\u2202\u2207\u2202 Can you give me a discount? Sorry it is already on sale. \uD83C\uDF3A \uD83E\uDDF3 \u2B50 \uD83D\uDC4D \uD83C\uDF41' },
+  { handle: '@dmegjsui22230', displayName: 'Dmegjsui', text: '\u2297\u2295\u2296 I usually play it on Saturday afternoons. \uD83C\uDF42 \uD83C\uDF38 \uD83E\uDE84' },
+  { handle: '@zogsa71014',   displayName: 'Zogsa',     text: '// \u26A1 /\\ I like reading books and watching movies. \uD83C\uDF41 \uD83C\uDF86 \uD83C\uDF3A \uD83C\uDF1F' },
+  { handle: '@mnxabrv38895', displayName: 'Mnxabrv',   text: '\u2295\u2296\u2297 Yes they are. They look very beautiful. \uD83C\uDF3F \uD83C\uDF10' },
+  { handle: '@vaoefxb2234',  displayName: 'Vaoefxb',   text: '\u222A\u2229\u2208 I know that song it is very nice. \uD83E\uDDF3 \uD83C\uDFAD \uD83C\uDF10 \uD83E\uDDF3 \uD83E\uDD8B' },
+];
+for (const t of MATH_PREFIX_BOTS) {
+  assertDetected(t.handle, t, 0.90);
+}
+
+section('addJokeTemplateClusterResults — math-prefix bot cluster');
+{
+  const results = [];
+  addJokeTemplateClusterResults(MATH_PREFIX_BOTS, results);
+  // Per-tweet rules already catch 4/5; the cluster should flag the remaining one (@mnxabrv38895)
+  // All 5 should end up flagged between per-tweet + cluster combined
+  const allResults = [
+    ...MATH_PREFIX_BOTS.flatMap(t => { const r = detectObviousBotReply(t); return r ? [r] : []; }),
+    ...results,
+  ];
+  const handles = new Set(allResults.map(r => r.handle.toLowerCase()));
+  assert('all 5 math-prefix bots eventually flagged', handles.size, 5);
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

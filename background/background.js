@@ -1456,6 +1456,24 @@ function hasEmojiBurst(text, minCount = 5) {
 }
 
 /**
+ * Returns true when the text begins with 2+ consecutive Unicode mathematical /
+ * set-theory / misc-technical operator characters (U+2200–U+23FF, U+2700–U+27BF,
+ * U+2A00–U+2AFF) or a slash-based decorative prefix like "// ⚡ /\".
+ * This is a hallmark of a newer spam-bot wave that uses math symbols as visual
+ * decoration before a short generic English sentence (e.g. @mnxabrv38895,
+ * @Pzthc162184, @dmegjsui22230, @zogsa71014, @vaoefxb2234).
+ */
+function hasMathSymbolPrefix(text) {
+  const t = String(text || '').trimStart();
+  // 2+ consecutive chars from Mathematical Operators / Misc Technical /
+  // Supplemental Mathematical Operators / Misc Symbols & Arrows blocks
+  if (/^[\u2200-\u23FF\u2700-\u27BF\u2A00-\u2AFF]{2}/u.test(t)) return true;
+  // Slash-based decorative prefix: "//" or "/\" at the very start
+  if (/^\/[\/\\]/.test(t)) return true;
+  return false;
+}
+
+/**
  * Returns true when the text is a short English phrase (4–13 words)
  * sandwiched inside heavy emoji/symbol decoration — the hallmark of
  * inspirational-quote bot accounts like @ansqyfgo458, @Hralx284483 etc.
@@ -1536,6 +1554,7 @@ function detectObviousBotReply(tweet, customKeywords = []) {
   const jokeTemplateFamily = getEnglishJokeTemplateFamily(text);
   const emojiBurst = hasEmojiBurst(text, 5);
   const emojiDecoratedPhrase = hasEmojiDecoratedShortEnglishPhrase(text);
+  const mathPrefix = hasMathSymbolPrefix(text);
 
   if (adultName) reasons.push('display name or handle contains adult/spam lure keywords');
   if (cloudDrivePromo) reasons.push('reply text contains cloud-drive promo link keywords');
@@ -1551,6 +1570,7 @@ function detectObviousBotReply(tweet, customKeywords = []) {
   if (jokeTemplateFamily) reasons.push(`reply text matches repetitive english joke template (${jokeTemplateFamily})`);
   if (emojiBurst) reasons.push('reply text has unusually dense emoji decoration');
   if (emojiDecoratedPhrase) reasons.push('reply text is a short english phrase wrapped in emoji decoration');
+  if (mathPrefix) reasons.push('text starts with math/unicode-operator symbol prefix (bot decoration pattern)');
 
   if (cloudDrivePromo) {
     return buildLocalRuleHit(tweet, 0.96, reasons);
@@ -1578,6 +1598,10 @@ function detectObviousBotReply(tweet, customKeywords = []) {
 
   if (randomHandle && emojiDecoratedPhrase) {
     return buildLocalRuleHit(tweet, 0.95, reasons);
+  }
+
+  if (randomHandle && mathPrefix) {
+    return buildLocalRuleHit(tweet, 0.93, reasons);
   }
 
   if (randomHandle && decorativeTemplate) {
@@ -1760,8 +1784,8 @@ function addJokeTemplateClusterResults(tweets, results) {
     const englishLen = words.join('').length;
     const totalLen = text.replace(/\s/g, '').length;
     if (totalLen === 0 || englishLen / totalLen > 0.88) return;
-    // Require at least some emoji or decorative signals
-    if (countEmojiChars(text) < 3 && !hasDecorativeTemplateSignal(text)) return;
+    // Require at least some emoji or decorative signals (math-symbol prefix also qualifies)
+    if (countEmojiChars(text) < 3 && !hasDecorativeTemplateSignal(text) && !hasMathSymbolPrefix(text)) return;
     phraseItems.push(tweet);
   });
   const phraseHandles = new Set(phraseItems.map(t => String(t?.handle || '').toLowerCase()).filter(Boolean));
