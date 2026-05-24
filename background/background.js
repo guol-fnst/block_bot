@@ -2192,6 +2192,7 @@ async function startAnalysisForTab(tabId, overrides = {}) {
     addCoordinatedLocalRuleResults(tweets, results, cfg.obviousBotKeywords);
     addJokeTemplateClusterResults(tweets, results);
 
+    let aiOnlyDetections = [];
     if (prefilter.modelTweets.length > 0 && aiAvailable) {
       const modelResults = await analyzeTweetsOptimized(prefilter.modelTweets, cfg, async (done, total) => {
         await setAnalysisState(tabId, {
@@ -2208,6 +2209,19 @@ async function startAnalysisForTab(tabId, overrides = {}) {
 
       // Detect coordinated copy-paste/auto-reply bots among tweets that still need model analysis.
       detectAutoReplyBots(prefilter.modelTweets, modelResults);
+
+      // Collect AI-only detections: items AI flagged as bots that local rules missed.
+      // These are useful for enriching local rules in the future.
+      const threshold = normalizeThreshold(cfg.spamConfidenceThreshold);
+      aiOnlyDetections = modelResults
+        .filter(r => r.isSpamOrBot && Number(r.confidence || 0) >= threshold)
+        .map(r => ({
+          handle: String(r.handle || ''),
+          displayName: String(r.displayName || ''),
+          confidence: Number(r.confidence || 0),
+          reason: String(r.reason || ''),
+          evidenceTweet: String(r.evidenceTweet || '')
+        }));
     }
 
     if (!aiAvailable) {
@@ -2266,7 +2280,8 @@ async function startAnalysisForTab(tabId, overrides = {}) {
       error: '',
       progressText: '',
       sourceUrl: analysisSourceUrl,
-      autoQueued
+      autoQueued,
+      aiOnlyDetections: aiOnlyDetections.length > 0 ? aiOnlyDetections : []
     });
   } catch (e) {
     const prev = (await getAnalysisState(tabId)) || { scannedTweetCount: 0 };

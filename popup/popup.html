@@ -59,6 +59,10 @@
       <button class="btn-link" id="btn-deselect-all">全不选</button>
     </div>
     <ul id="candidate-list" class="candidate-list"></ul>
+    <details id="ai-only-section" class="ai-only-section hidden">
+      <summary class="ai-only-summary">🤖 AI 发现但本地规则未识别 <span id="ai-only-count"></span>（可用于丰富本地规则）</summary>
+      <ul id="ai-only-list" class="ai-only-list"></ul>
+    </details>
     <div class="result-actions-bottom">
       <button class="btn btn-danger" id="btn-confirm-block">加入屏蔽任务列表</button>
       <button class="btn btn-secondary" id="btn-cancel-results">取消</button>

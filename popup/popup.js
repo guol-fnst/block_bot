@@ -12,6 +12,7 @@ const views = {
 let currentTabId = null;
 let isXTab = false;
 let candidates = [];
+let aiOnlyDetections = [];
 let scannedTweetCount = 0;
 let analysisPollTimer = null;
 let queuePollTimer = null;
@@ -560,6 +561,7 @@ async function applyAnalysisState(state) {
             : Number(c.confidence || 0) >= 0.9
         }))
       : [];
+    aiOnlyDetections = Array.isArray(state.aiOnlyDetections) ? state.aiOnlyDetections : [];
     if (candidates.length === 0) {
       showNotice(`扫描了 ${scannedTweetCount} 条推文，未发现疑似垃圾账号。`, false);
       return;
@@ -567,6 +569,11 @@ async function applyAnalysisState(state) {
     currentScanSource = state.sourceUrl || currentTabUrl;
     if (autoBlockEnabled) {
       if (state.autoQueued) {
+        const n = Number(state.scannedTweetCount || 0);
+        const c = Array.isArray(state.candidates) ? state.candidates.length : 0;
+        setScanMsg(`采集了 ${n} 条回复，检测出 ${c} 个账号`);
+        showView('scanning');
+        await new Promise(r => setTimeout(r, 2000));
         await clearAnalysisState();
         window.close();
         return;
@@ -640,6 +647,37 @@ function renderResults() {
       updateConfirmBtn();
     });
   });
+
+  // Render AI-only detections panel (AI caught but local rules missed)
+  const aiOnlySection = document.getElementById('ai-only-section');
+  const aiOnlyList = document.getElementById('ai-only-list');
+  const aiOnlyCountEl = document.getElementById('ai-only-count');
+  if (aiOnlySection && aiOnlyList) {
+    if (Array.isArray(aiOnlyDetections) && aiOnlyDetections.length > 0) {
+      aiOnlySection.classList.remove('hidden');
+      if (aiOnlyCountEl) aiOnlyCountEl.textContent = `（${aiOnlyDetections.length} 条）`;
+      aiOnlyList.innerHTML = '';
+      aiOnlyDetections.forEach(item => {
+        const li = document.createElement('li');
+        li.className = 'ai-only-item';
+        li.innerHTML =
+          `<div>` +
+          `<span class="ai-only-handle">${escapeHtml(item.handle)}</span>` +
+          `<span class="ai-only-name">${escapeHtml(item.displayName || '')}</span>` +
+          `<span class="ai-only-conf">${Math.round((item.confidence || 0) * 100)}%</span>` +
+          `</div>` +
+          ((item.evidenceTweet || '').trim()
+            ? `<div class="ai-only-evidence">"${escapeHtml(item.evidenceTweet.trim())}"</div>`
+            : '') +
+          ((item.reason || '').trim()
+            ? `<div class="ai-only-reason">${escapeHtml(item.reason.trim())}</div>`
+            : '');
+        aiOnlyList.appendChild(li);
+      });
+    } else {
+      aiOnlySection.classList.add('hidden');
+    }
+  }
 
   updateConfirmBtn();
   showView('results');

@@ -218,6 +218,73 @@ body {
   gap: 6px;
 }
 
+/* ── AI-only detections panel ───────────────────────────────────────────────── */
+.ai-only-section {
+  margin-bottom: 10px;
+  border: 1px solid #d1ecf1;
+  border-radius: 8px;
+  background: #f0faff;
+  overflow: hidden;
+}
+
+.ai-only-summary {
+  cursor: pointer;
+  padding: 8px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #0c6b8e;
+  list-style: none;
+  user-select: none;
+}
+.ai-only-summary::-webkit-details-marker { display: none; }
+.ai-only-summary:hover { background: #e0f4fc; }
+
+.ai-only-list {
+  list-style: none;
+  max-height: 200px;
+  overflow-y: auto;
+  border-top: 1px solid #d1ecf1;
+}
+
+.ai-only-item {
+  padding: 8px 12px;
+  border-bottom: 1px solid #d1ecf1;
+  font-size: 12px;
+}
+.ai-only-item:last-child { border-bottom: none; }
+
+.ai-only-handle {
+  font-weight: 700;
+  color: #0c6b8e;
+}
+.ai-only-name { color: #71767b; margin-left: 4px; }
+.ai-only-conf {
+  margin-left: 6px;
+  font-size: 11px;
+  font-weight: 700;
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: #cce5f5;
+  color: #0c6b8e;
+}
+.ai-only-evidence {
+  margin-top: 4px;
+  color: #536471;
+  line-height: 1.4;
+  border-left: 2px solid #b8dff0;
+  padding-left: 6px;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.ai-only-reason {
+  margin-top: 3px;
+  color: #8899a6;
+  font-size: 11px;
+  font-style: italic;
+}
+
 /* ── Block progress ─────────────────────────────────────────────────────────── */
 .block-header { margin-bottom: 8px; }
 .block-header p { line-height: 1.5; }
