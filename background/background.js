@@ -1289,6 +1289,8 @@ const BUILT_IN_OBVIOUS_BOT_KEYWORDS = [
   '嫂',
   'sao货',
   '能打',
+  '炮友',
+  '找炮',
   '固炮',
   '上门',
   '外围',
@@ -1371,8 +1373,8 @@ function looksLikeRandomHandle(handle) {
   const slug = String(handle || '').replace(/^@/, '');
   return (
     /^[A-Z][a-z]+[A-Z][a-z]+\d{3,}$/.test(slug) ||
-    /^[A-Za-z]{5,}\d{4,}$/.test(slug) ||
-    /^[a-z0-9]{10,}$/.test(slug) && /\d{4,}/.test(slug) && /[a-z]/.test(slug)
+    /^[A-Za-z]{5,}\d{3,}$/.test(slug) ||
+    /^[a-z0-9]{10,}$/.test(slug) && /\d{3,}/.test(slug) && /[a-z]/.test(slug)
   );
 }
 
@@ -1453,6 +1455,30 @@ function hasEmojiBurst(text, minCount = 5) {
   return countEmojiChars(text) >= minCount;
 }
 
+/**
+ * Returns true when the text is a short English phrase (4–13 words)
+ * sandwiched inside heavy emoji/symbol decoration — the hallmark of
+ * inspirational-quote bot accounts like @ansqyfgo458, @Hralx284483 etc.
+ */
+function hasEmojiDecoratedShortEnglishPhrase(text) {
+  const raw = String(text || '').trim();
+  if (!raw) return false;
+
+  // Need at least 5 emoji chars for "heavy decoration"
+  if (countEmojiChars(raw) < 5) return false;
+
+  // Pull out English words (2+ letters)
+  const words = raw.match(/[a-zA-Z]{2,}/g) || [];
+  if (words.length < 4 || words.length > 13) return false;
+
+  // English characters must NOT dominate — decoration must be substantial
+  const englishLen = words.join('').length;
+  const totalLen = raw.replace(/\s/g, '').length;
+  if (totalLen > 0 && englishLen / totalLen > 0.55) return false;
+
+  return true;
+}
+
 function getEnglishJokeTemplateFamily(text) {
   const raw = String(text || '').trim();
   if (!raw) return '';
@@ -1507,6 +1533,7 @@ function detectObviousBotReply(tweet, customKeywords = []) {
   const decorativeTemplate = hasDecorativeTemplateSignal(text);
   const jokeTemplateFamily = getEnglishJokeTemplateFamily(text);
   const emojiBurst = hasEmojiBurst(text, 5);
+  const emojiDecoratedPhrase = hasEmojiDecoratedShortEnglishPhrase(text);
 
   if (adultName) reasons.push('display name or handle contains adult/spam lure keywords');
   if (cloudDrivePromo) reasons.push('reply text contains cloud-drive promo link keywords');
@@ -1521,6 +1548,7 @@ function detectObviousBotReply(tweet, customKeywords = []) {
   if (decorativeTemplate) reasons.push('reply text looks like a decorative template bot message');
   if (jokeTemplateFamily) reasons.push(`reply text matches repetitive english joke template (${jokeTemplateFamily})`);
   if (emojiBurst) reasons.push('reply text has unusually dense emoji decoration');
+  if (emojiDecoratedPhrase) reasons.push('reply text is a short english phrase wrapped in emoji decoration');
 
   if (cloudDrivePromo) {
     return buildLocalRuleHit(tweet, 0.96, reasons);
@@ -1546,8 +1574,17 @@ function detectObviousBotReply(tweet, customKeywords = []) {
     return buildLocalRuleHit(tweet, 0.93, reasons);
   }
 
+  if (randomHandle && emojiDecoratedPhrase) {
+    return buildLocalRuleHit(tweet, 0.95, reasons);
+  }
+
   if (randomHandle && decorativeTemplate) {
     return buildLocalRuleHit(tweet, 0.92, reasons);
+  }
+
+  // Standalone: emoji-decorated phrase is strong enough even without confirmed random handle
+  if (emojiDecoratedPhrase && emojiBurst) {
+    return buildLocalRuleHit(tweet, 0.88, reasons);
   }
 
   if (defaultAvatar && (adultName || randomHandle || suspiciousPromoText || tinyToken || emojiOnly || lowInfoMixed)) {
