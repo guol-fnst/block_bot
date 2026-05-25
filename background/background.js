@@ -11,7 +11,8 @@ const DEFAULT_SCRAPE_MAX_ROUNDS = 120;
 const DEFAULT_SCRAPE_MAX_TWEETS = 1000;
 const DEFAULT_SCRAPE_STAGNANT_ROUNDS = 4;
 const CONFIDENCE_THRESHOLD = 0.8;
-const MAX_TWEET_TEXT_LENGTH = 50;
+const MAX_TWEET_TEXT_LENGTH = 120;
+const MAX_TEXTS_PER_HANDLE_FOR_AI = 3;
 const ANALYSIS_KEY_PREFIX = 'analysisCache:';
 const API_RETRY_MAX_ATTEMPTS = 4;
 const API_RETRY_BASE_DELAY_MS = 800;
@@ -752,33 +753,32 @@ function buildPrompt(batch, customDetectionPrompt = '') {
       grouped.set(key, { handle: t.handle, displayName: t.displayName, texts: [] });
     }
     const entry = grouped.get(key);
-    if (t.text) {
-      const full = String(t.text);
+    if (t.text && entry.texts.length < MAX_TEXTS_PER_HANDLE_FOR_AI) {
+      const full = String(t.text).replace(/\s+/g, ' ').trim();
       entry.texts.push(full.length > MAX_TWEET_TEXT_LENGTH ? full.slice(0, MAX_TWEET_TEXT_LENGTH) + '…' : full);
     }
   });
 
   const tweetsJson = JSON.stringify(
     Array.from(grouped.values()).map(t => ({
-      handle: t.handle,
-      displayName: t.displayName,
-      texts: t.texts,
-      textCount: t.texts.length,
-      hasUrl: t.texts.some(text => /https?:\/\//.test(text)),
-      isReply: t.texts.some(text => text.startsWith('@')),
-      charDiversity: new Set(t.texts.join('')).size
-    })),
-    null,
-    2
+      h: t.handle,
+      n: t.displayName,
+      t: t.texts,
+      c: t.texts.length,
+      u: t.texts.some(text => /https?:\/\//.test(text)),
+      r: t.texts.some(text => text.startsWith('@')),
+      d: new Set(t.texts.join('')).size
+    }))
   );
 
   const rules = String(customDetectionPrompt || '').trim() || defaultDetectionRules();
 
   return (
-    '你是一个 Twitter/X 垃圾账号检测助手。请分析以下账号列表（每个账号可能含多条推文），判断是否疑似' +
-    '垃圾账号、广告号或机器人号。\n\n' +
-    '账号数据：\n' + tweetsJson + '\n\n' +
-    '请对每个 handle 返回一个 JSON 数组，格式如下（只返回 JSON，不要加其他文字）：\n' +
+    '你是 Twitter/X 垃圾账号检测器。目标是找出高置信垃圾号、广告号、诈骗号、引流号或机器人号。\n' +
+    '输入字段：h=handle，n=显示名，t=最多3条推文/回复文本，c=文本数，u=含URL，r=像回复，d=字符多样性。\n' +
+    '账号数据(JSON)：' + tweetsJson + '\n\n' +
+    '只返回疑似账号；正常账号或证据不足账号不要返回。只输出 JSON 数组，不要加解释文字。\n' +
+    '数组元素格式：\n' +
     '[\n' +
     '  {\n' +
     '    "handle": "@xxx",\n' +
@@ -789,9 +789,11 @@ function buildPrompt(batch, customDetectionPrompt = '') {
     '    "evidenceTweet": "命中的推文摘要"\n' +
     '  }\n' +
     ']\n\n' +
-    '判断必须以推文内容与行为模式为主，不要仅因为账号名里有随机数字就判定为垃圾号。\n\n' +
+    '判断必须以推文内容、重复模式、诱导行为和上下文风险为主；随机数字或陌生用户名只能作为辅助信号，不能单独定性。\n' +
+    '如果多账号文本高度模板化/复制粘贴，或单账号多条文本明显自动化，可提高置信度。\n' +
+    '如果只是普通观点、短赞同、新闻更新、产品账号、含数字用户名但内容正常，请不要返回。\n\n' +
     rules + '\n\n' +
-    '对于看起来正常的账号，isSpamOrBot 请返回 false，confidence 不要虚高。'
+    'confidence 使用 0.80-1.00；低于 0.80 或证据不足不要返回。'
   );
 }
 

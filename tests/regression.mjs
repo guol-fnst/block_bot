@@ -74,6 +74,7 @@ const {
   detectObviousBotReply,
   addJokeTemplateClusterResults,
   buildLocalRuleHit,
+  buildPrompt,
   normalizeCandidates,
   hasObviousBotKeyword,
 } = ctx;
@@ -130,6 +131,17 @@ section('Deep Scan review-before-block invariant');
     'Deep Scan must not enqueue block jobs before popup confirmation',
     /enqueueBlockAccounts\s*\(\s*deepScanState\.candidates/.test(performDeepScanSource)
   );
+}
+
+section('AI prompt efficiency');
+{
+  const prompt = buildPrompt([
+    { handle: '@bot1', displayName: 'Bot One', text: 'DM me for a free crypto airdrop https://example.com' },
+    { handle: '@normal1', displayName: 'Normal One', text: 'Thanks for sharing this thoughtful post.' }
+  ]);
+  assertTruthy('prompt tells model to return suspicious accounts only', prompt.includes('只返回疑似账号'));
+  assertTruthy('prompt uses compact input field names', prompt.includes('"h":"@bot1"'));
+  assertFalsy('prompt no longer asks for every handle response', prompt.includes('每个 handle 返回'));
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
