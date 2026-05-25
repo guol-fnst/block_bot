@@ -11,8 +11,8 @@ const DEFAULT_SCRAPE_MAX_ROUNDS = 120;
 const DEFAULT_SCRAPE_MAX_TWEETS = 1000;
 const DEFAULT_SCRAPE_STAGNANT_ROUNDS = 4;
 const CONFIDENCE_THRESHOLD = 0.8;
-const MAX_TWEET_TEXT_LENGTH = 120;
-const MAX_TEXTS_PER_HANDLE_FOR_AI = 3;
+const MAX_TWEET_TEXT_LENGTH = 220;
+const MAX_TEXTS_PER_HANDLE_FOR_AI = 5;
 const ANALYSIS_KEY_PREFIX = 'analysisCache:';
 const API_RETRY_MAX_ATTEMPTS = 4;
 const API_RETRY_BASE_DELAY_MS = 800;
@@ -743,6 +743,18 @@ function defaultDetectionRules() {
   );
 }
 
+function enhancedDefaultDetectionRules() {
+  return (
+    defaultDetectionRules() + '\n' +
+    '6. 【同串灌水机器人】：只有当同一条帖子下，多个不同账号在短时间内出现明显近重复、模板化、\n' +
+    '   批量复述、空泛接话且几乎没有新增信息时，才提高可疑度。\n' +
+    '   必须优先看是否存在：复制粘贴、同模板改写、异常一致的句式、装饰模板、引流/广告/黄赌骗信号，\n' +
+    '   或与随机 handle、异常显示名、低熵文本等其他风险信号叠加。\n' +
+    '   如果只是围绕社会议题、新闻、职场、养老、代际矛盾等话题发表正常短观点、反驳、举例、情绪化表达，\n' +
+    '   即使多个账号立场相近、语气接近、handle 含数字，也默认按真人讨论处理，不要仅凭“同主题短回复”判为机器人。'
+  );
+}
+
 function buildPrompt(batch, customDetectionPrompt = '') {
   // #7 fix: group tweets by handle so the LLM sees all messages per user
   // and can detect copy-paste / template-bot patterns more reliably.
@@ -771,7 +783,7 @@ function buildPrompt(batch, customDetectionPrompt = '') {
     }))
   );
 
-  const rules = String(customDetectionPrompt || '').trim() || defaultDetectionRules();
+  const rules = String(customDetectionPrompt || '').trim() || enhancedDefaultDetectionRules();
 
   return (
     '你是 Twitter/X 垃圾账号检测器。目标是找出高置信垃圾号、广告号、诈骗号、引流号或机器人号。\n' +
@@ -2384,10 +2396,10 @@ async function performDeepScan(cfg) {
     let workerTab = deepScanState.workerTabId ? await chrome.tabs.get(deepScanState.workerTabId).catch(() => null) : null;
 
     if (!workerTab) {
-      workerTab = await tabsCreate(profileUrl, false);
+      workerTab = await tabsCreate(profileUrl, true);
       deepScanState.workerTabId = workerTab.id;
     } else {
-      await tabsUpdate(workerTab.id, { url: profileUrl });
+      await tabsUpdate(workerTab.id, { url: profileUrl, active: true });
     }
 
     try {
@@ -2426,7 +2438,7 @@ async function performDeepScan(cfg) {
       deepScanState.scannedPostUrls.add(postUrl);
 
       deepScanState.currentStep = `采集第 ${i + 1}/${postUrls.length} 条帖子的回复…`;
-      await tabsUpdate(workerTab.id, { url: postUrl });
+      await tabsUpdate(workerTab.id, { url: postUrl, active: true });
 
       try {
         await waitForTabLoaded(workerTab.id, 12000);
@@ -2699,26 +2711,16 @@ async function scrollTabToTop(tabId, waitMs = 800) {
 }
 
 async function collectPostReplies(tabId, maxReplies = 100, cfg = {}) {
-  // Bug 4 fix: we no longer deduplicate by handle across the entire function.
-  // Each scroll round deduplicates only within itself (via the in-page `seen`
-  // Set), but the same user can appear in multiple rounds with different tweet
-  // texts. This lets detectAutoReplyBots() compare multiple messages per user
-  // and identify copy-paste / template bots.
-  const replies = [];
-  // Track unique (handle, tweetUrl) pairs so we do not add the exact same
-  // tweet twice (e.g. when the same article is still visible after a scroll).
-  const seenKeys = new Set();
-  const maxRounds = normalizeScrapeMaxRounds(cfg.scrapeMaxRounds);
   const waitMs = normalizeScrapeScrollWaitMs(cfg.scrapeScrollWaitMs);
-  const stagnantLimit = normalizeScrapeStagnantRounds(cfg.scrapeStagnantRounds);
-  let lastCount = 0;
-  let stagnantRounds = 0;
+  const maxRounds = normalizeScrapeMaxRounds(cfg.scrapeMaxRounds);
+  const stagnantRounds = normalizeScrapeStagnantRounds(cfg.scrapeStagnantRounds);
+  const targetBasedRounds = Math.ceil(maxReplies / 6);
+  const effectiveRounds = Math.min(300, Math.max(maxRounds, targetBasedRounds));
+  const scrapeTimeoutMs = Math.min(
+    600000,
+    Math.max(20000, waitMs * effectiveRounds + 20000)
+  );
 
-  await scrollTabToTop(tabId, waitMs);
-
-  // X.com is a SPA: tab status=complete fires before React has rendered reply
-  // articles. Wait until at least 2 articles are present (index 0 = original
-  // tweet, index 1+ = replies) before starting the scroll loop.
   const repliesAppearTimeout = Math.max(15000, Math.round(waitMs * 8));
   const repliesAppeared = await waitForRepliesRendered(tabId, 2, repliesAppearTimeout);
   if (!repliesAppeared) {
@@ -2726,135 +2728,29 @@ async function collectPostReplies(tabId, maxReplies = 100, cfg = {}) {
     return [];
   }
 
-  for (let i = 0; i < maxRounds; i++) {
-    const result = await executeInTab(tabId, () => {
-      const tweets = [];
-      const articles = document.querySelectorAll('article[data-testid="tweet"]');
-      // Deduplicate within this single DOM snapshot only.
-      const seen = new Set();
-
-      articles.forEach(article => {
-        try {
-          const userNameBlock = article.querySelector('[data-testid="User-Name"]');
-          if (!userNameBlock) return;
-
-          const profileAnchors = userNameBlock.querySelectorAll('a[href^="/"]');
-          let handle = '';
-          for (const a of profileAnchors) {
-            const rawPath = a.getAttribute('href') || '';
-            const slug = rawPath.replace(/^\//, '').split('/')[0].split('?')[0];
-            const reserved = new Set(['home', 'explore', 'notifications', 'messages', 'search', 'compose', 'settings', 'i', 'tos', 'privacy', 'hashtag']);
-            if (slug && !reserved.has(slug.toLowerCase())) {
-              handle = `@${slug}`;
-              break;
-            }
-          }
-
-          if (!handle) return;
-
-          const timeEl = article.querySelector('time');
-          const statusA = timeEl ? timeEl.closest('a') : null;
-          const statusPath = statusA ? statusA.getAttribute('href') || '' : '';
-          const tweetUrl = statusPath ? `https://x.com${statusPath}` : '';
-
-          // Deduplicate within this snapshot by (handle, tweetUrl).
-          const snapKey = `${handle.toLowerCase()}|${tweetUrl}`;
-          if (seen.has(snapKey)) return;
-          seen.add(snapKey);
-
-          let displayName = '';
-          const spans = userNameBlock.querySelectorAll('span');
-          for (const s of spans) {
-            const t = (s.innerText || s.textContent).trim();
-            if (t && !t.startsWith('@')) {
-              displayName = t;
-              break;
-            }
-          }
-
-          const textEl = article.querySelector('[data-testid="tweetText"]');
-          const text = textEl ? textEl.innerText.trim() : '';
-
-          // #5 fix: keep media-only tweets (no text) with a placeholder
-          // so image-spam bots are not silently skipped.
-          const effectiveText = text || '[媒体内容/无文字推文]';
-          const avatarImg = article.querySelector('[data-testid="Tweet-User-Avatar"] img, [data-testid*="UserAvatar"] img');
-          const avatarSrc = avatarImg ? avatarImg.getAttribute('src') || '' : '';
-          tweets.push({
-            handle,
-            displayName,
-            text: effectiveText,
-            tweetUrl,
-            defaultProfileImage: /default_profile|default_profile_images|profile_images\/default/i.test(String(avatarSrc || '')),
-            profileUrl: `https://x.com/${handle.replace('@', '')}`
-          });
-        } catch (_) {}
-      });
-
-      return tweets;
-    }).catch(() => []);
-
-    // Merge into replies, deduplicating only by exact (handle, tweetUrl) key
-    // so different tweets from the same user are all preserved.
-    result.forEach(r => {
-      const key = `${r.handle.toLowerCase()}|${r.tweetUrl}`;
-      if (!seenKeys.has(key)) {
-        seenKeys.add(key);
-        replies.push(r);
+  const scrapeResp = await withTimeout(
+    sendToTabSafe(tabId, {
+      action: 'scrapeTweets',
+      scrapeConfig: {
+        initialWaitMs: repliesAppearTimeout,
+        scrollWaitMs: waitMs,
+        maxRounds: effectiveRounds,
+        maxTweets: maxReplies + 6,
+        stagnantRounds
       }
-    });
+    }),
+    scrapeTimeoutMs,
+    '深度扫描采集回复超时，请稍后重试'
+  );
 
-    if (replies.length >= maxReplies) break;
-
-    if (replies.length <= lastCount) {
-      stagnantRounds++;
-      if (stagnantRounds >= stagnantLimit) break;
-    } else {
-      stagnantRounds = 0;
-    }
-
-    lastCount = replies.length;
-    await executeInTab(tabId, () => {
-      function isScrollableElement(el) {
-        if (!el || el === document.body) return false;
-        const style = window.getComputedStyle(el);
-        if (!style) return false;
-        const overflowY = style.overflowY || '';
-        const canScroll = overflowY === 'auto' || overflowY === 'scroll' || overflowY === 'overlay';
-        return canScroll && (el.scrollHeight - el.clientHeight) > 80;
-      }
-
-      function getPreferredScrollRoot() {
-        const tweetArticle = document.querySelector('article[data-testid="tweet"]');
-        let node = tweetArticle;
-        while (node && node !== document.body) {
-          if (isScrollableElement(node)) return node;
-          node = node.parentElement;
-        }
-
-        const primaryColumn = document.querySelector('[data-testid="primaryColumn"]');
-        node = primaryColumn;
-        while (node && node !== document.body) {
-          if (isScrollableElement(node)) return node;
-          node = node.parentElement;
-        }
-
-        return document.scrollingElement || document.documentElement || document.body;
-      }
-
-      const root = getPreferredScrollRoot();
-      if (!root || root === document.documentElement || root === document.body || root === document.scrollingElement) {
-        window.scrollBy({ top: Math.max(window.innerHeight * 0.8, 600), behavior: 'auto' });
-      } else {
-        root.scrollBy({ top: Math.max(window.innerHeight * 0.8, 600), behavior: 'auto' });
-      }
-      return true;
-    }).catch(() => {});
-    const waitNextMs = stagnantRounds > 0 ? waitMs : Math.max(600, Math.round(waitMs * 0.82));
-    await sleep(waitNextMs);
+  if (!scrapeResp?.ok) {
+    throw new Error(scrapeResp?.error || '深度扫描采集回复失败');
   }
 
-  return replies.slice(0, maxReplies);
+  return (scrapeResp.tweets || []).slice(0, maxReplies).map(tweet => ({
+    ...tweet,
+    text: String(tweet?.text || '').trim() || '[媒体内容/无文字推文]'
+  }));
 }
 
 // ── Tab 事件监听：页面分析缓存管理 ────────────────────────────────────────────
@@ -3123,4 +3019,3 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     return false;
   }
 });
-

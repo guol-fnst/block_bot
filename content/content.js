@@ -119,12 +119,7 @@
     const tweetUrl = statusPath ? `https://x.com${statusPath}` : '';
     const tweetIdMatch = statusPath.match(/\/status\/(\d+)/);
     const tweetId = tweetIdMatch ? tweetIdMatch[1] : '';
-    if (
-      threadContext &&
-      tweetId &&
-      handle.toLowerCase() === threadContext.authorHandle &&
-      tweetId === threadContext.statusId
-    ) {
+    if (threadContext && handle.toLowerCase() === threadContext.authorHandle) {
       return null;
     }
     const avatarImg = article.querySelector('[data-testid="Tweet-User-Avatar"] img, [data-testid*="UserAvatar"] img');

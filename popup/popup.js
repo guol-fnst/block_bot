@@ -795,6 +795,8 @@ async function renderDeepScanStatus(status) {
   if (!status.running && status.error) {
     stopDeepScanPolling();
     showNotice('⚠️ 深度扫描失败：' + status.error, true);
+    chrome.runtime.sendMessage({ action: 'clearDeepScanCompleted' }).catch(() => {});
+    showView(isXTab ? 'idle' : 'notX');
     return;
   }
 
