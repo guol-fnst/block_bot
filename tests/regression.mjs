@@ -237,6 +237,8 @@ section('addJokeTemplateClusterResults — cluster does NOT fire for <3 accounts
 section('hasObviousBotKeyword');
 assertTruthy('炮友 in display name', hasObviousBotKeyword('炮友交友'));
 assertTruthy('找炮 in display name', hasObviousBotKeyword('找炮友'));
+assertTruthy('资源 in display name', hasObviousBotKeyword('真实资源-主页自取'));
+assertTruthy('主页 in display name', hasObviousBotKeyword('主页自取'));
 assertTruthy('好涩 in display name', hasObviousBotKeyword('\u5979\u597d\u6da9\u2763\uFE0F\u6211\u4E0D\u884C\u4E86\uD83D\uDC49'));
 assertTruthy('第一骚 in display name', hasObviousBotKeyword('m\u63A8\u7279\uD83D\uDC93\u7B2C\u4E00\u9A9A'));
 assertFalsy('normal name',          hasObviousBotKeyword('John Smith'));
@@ -388,6 +390,8 @@ assertDetected('@elonmusk7pg',
 section('hasAdultLureShortCopy');
 assertTruthy('line-offline adult lure copy',
   hasAdultLureShortCopy('+\u7ebf\u4e0b\u6211\u5c31\u66f0\u8fc7\uD83D\uDC97\u8fd9\u4e2a\u9a9a\u8d27\uD83D\uDC49'));
+assertTruthy('resource-homepage self-pick copy',
+  hasAdultLureShortCopy('\u771f\u5b9e\u8d44\u6e90-\u4e3b\u9875\u81ea\u53d6'));
 assertTruthy('homepage can do it lure copy',
   hasAdultLureShortCopy('m\u5237\u4e86\u534a\u5929\u7684X\uD83E\uDD73\u5c31\u5979\u7684\u4e3b\u9875\u80fd\u6253\u2708\uFE0F\u4e86'));
 assertTruthy('too sexy lure copy',
@@ -408,6 +412,18 @@ assertDetected('@MarkNewtnCMT1',
   { handle: '@MarkNewtnCMT1', displayName: 'Mark Newton. CMT', text: '*\u5237\u4e86\u534a\u5929\u7684X\uD83E\uDD29\u5c31\u5979\u7684\u4e3b\u9875\u80fd\u6253\u2708\uFE0F\u4e86' }, 0.9);
 assertDetected('@elonmuskchats09',
   { handle: '@elonmuskchats09', displayName: 'Mr. Musk', text: 'y\u6bd4\u5979\u597d\u770b\u7684\u6ca1\u5979\u9a9a\uD83E\uDD24\u6bd4\u5979\u9a9a\u7684\u6ca1\u5979\u597d\u770b' }, 0.9);
+
+section('detectObviousBotReply — reported homepage-resource lure samples');
+assertDetected('@Isabella4091513 with single-letter emoji lure',
+  { handle: '@Isabella4091513', displayName: '\u771f\u5b9e\u8d44\u6e90-\u4e3b\u9875\u81ea\u53d6', text: 'H \u{1F302} \u{1F331} \u{1F38C} \u{1F342} \u{1F4B0}' }, 0.9);
+assertDetected('@Isabella4091513 variant with W + emoji',
+  { handle: '@Isabella4091513', displayName: '\u771f\u5b9e\u8d44\u6e90-\u4e3b\u9875\u81ea\u53d6', text: 'W \u{1F38C} \u{1F33B} \u{1F340} \u{1F389}' }, 0.9);
+assertDetected('@Maya989213418 nearby/adult keyword + single-letter emoji',
+  { handle: '@Maya989213418', displayName: '\u5b89\u59aebaby', text: 'D \u{1F36C} \u{1F4B0}' }, 0.9);
+assertDetected('@Eva647152086 nearby keyword + emoji letter token',
+  { handle: '@Eva647152086', displayName: '\u9644\u8fd1\u771f\u5b9e\u7684\u90fd\u5728\u8fd9', text: 'L \u{1F33B} \u{1F6A9}' }, 0.9);
+assertDetected('@Eva542463644 fixed-partner keyword + emoji letter token',
+  { handle: '@Eva542463644', displayName: '\u5bfb\u56fa\u70ae', text: 'X \u{1F680} \u{1F4BC}' }, 0.9);
 
 section('detectObviousBotReply — long decorative inspirational bots');
 assertDetected('@Yaekn131039',
