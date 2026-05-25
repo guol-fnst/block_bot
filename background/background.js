@@ -2490,12 +2490,6 @@ async function performDeepScan(cfg) {
     deepScanState.currentStep = `扫描完成，找到 ${deepScanState.candidatesCount} 个疑似账号`;
     deepScanState.completed = true;
 
-    // Add to block queue
-    if (deepScanState.candidatesCount > 0) {
-      enqueueBlockAccounts(deepScanState.candidates);
-      runGlobalBlockQueue();
-    }
-
     deepScanState.running = false;
     saveDeepScanState();
   } catch (e) {

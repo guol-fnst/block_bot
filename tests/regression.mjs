@@ -123,6 +123,15 @@ function section(name) {
   console.log(`\n── ${name}`);
 }
 
+section('Deep Scan review-before-block invariant');
+{
+  const performDeepScanSource = String(ctx.performDeepScan || '');
+  assertFalsy(
+    'Deep Scan must not enqueue block jobs before popup confirmation',
+    /enqueueBlockAccounts\s*\(\s*deepScanState\.candidates/.test(performDeepScanSource)
+  );
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
 // 1. looksLikeRandomHandle
 // ═══════════════════════════════════════════════════════════════════════════
