@@ -67,6 +67,54 @@
     return /default_profile|default_profile_images|profile_images\/default/i.test(String(src || ''));
   }
 
+  function extractTweetText(textEl) {
+    if (!textEl) return '';
+
+    const pieces = [];
+    const blockTags = new Set(['DIV', 'P']);
+
+    function walk(node) {
+      if (!node) return;
+
+      if (node.nodeType === 3) {
+        pieces.push(node.nodeValue || '');
+        return;
+      }
+
+      if (node.nodeType !== 1) return;
+
+      const el = node;
+      const tag = el.tagName;
+
+      if (tag === 'IMG') {
+        const alt = el.getAttribute('alt') || '';
+        if (alt) pieces.push(alt);
+        return;
+      }
+
+      if (tag === 'BR') {
+        pieces.push('\n');
+        return;
+      }
+
+      const before = pieces.length;
+      el.childNodes.forEach(walk);
+      if (blockTags.has(tag) && pieces.length > before && !String(pieces[pieces.length - 1]).endsWith('\n')) {
+        pieces.push('\n');
+      }
+    }
+
+    walk(textEl);
+
+    const text = pieces.join('')
+      .replace(/\u00a0/g, ' ')
+      .replace(/[ \t]+\n/g, '\n')
+      .replace(/\n{3,}/g, '\n\n')
+      .trim();
+
+    return text || (textEl.innerText || textEl.textContent || '').trim();
+  }
+
   function parseTweetFromArticle(article, threadContext) {
     // 改善1: 过滤广告推文（Promoted Tweets），避免误判广告主账号
     if (article.querySelector('[data-testid="placementTracking"]')) return null;
@@ -114,7 +162,7 @@
     }
 
     const textEl = article.querySelector('[data-testid="tweetText"]');
-    const text = textEl ? textEl.innerText.trim() : '';
+    const text = extractTweetText(textEl);
 
     const tweetUrl = statusPath ? `https://x.com${statusPath}` : '';
     const tweetIdMatch = statusPath.match(/\/status\/(\d+)/);
