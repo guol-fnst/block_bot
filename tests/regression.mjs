@@ -419,6 +419,14 @@ assertTruthy('too sexy lure copy',
   hasAdultLureShortCopy('\u2764\uFE0F\u5979\u597d\u6da9\uD83E\uDD7A\u6211\u4e0d\u884c\u4e86\uD83D\uDC49'));
 assertTruthy('compare sexy lure copy',
   hasAdultLureShortCopy('y\u6bd4\u5979\u597d\u770b\u7684\u6ca1\u5979\u9a9a\uD83E\uDD24\u6bd4\u5979\u9a9a\u7684\u6ca1\u5979\u597d\u770b'));
+assertTruthy('variant: 30+ phrase with inserted letter noise',
+  hasAdultLureShortCopy('30+\u7684r \u4f53\u5236\u5185\u8001\u5e08 \u73a9\u7684\u5c31\u662f\u8fd4\u5dee'));
+assertTruthy('variant: sao copy with inserted letter noise',
+  hasAdultLureShortCopy('sao\u8d27p \u6ca1\u4eba\u6bd4\u5979sao\u2763\uFE0F'));
+assertTruthy('variant: homepage lure with inserted letter noise',
+  hasAdultLureShortCopy('\u5237\u4e86\u534a\u5929a\u7684X\u5c31\u5979\u7684\u4e3b\u9875\u80fd\u6253\u2708\uFE0F\u4e86'));
+assertTruthy('variant: too-sexy copy with inserted letter noise',
+  hasAdultLureShortCopy('\u5979\u592a\u6da9\u4e86q \u6211\u771f\u9876\u4e0d\u4f4f'));
 assertFalsy('normal Chinese sentence should not trigger short-copy lure rule',
   hasAdultLureShortCopy('\u4eca\u5929\u7684\u665a\u971e\u5f88\u597d\u770b\u6211\u60f3\u51fa\u53bb\u6563\u6b65'));
 
@@ -445,6 +453,20 @@ assertDetected('@Eva647152086 nearby keyword + emoji letter token',
   { handle: '@Eva647152086', displayName: '\u9644\u8fd1\u771f\u5b9e\u7684\u90fd\u5728\u8fd9', text: 'L \u{1F33B} \u{1F6A9}' }, 0.9);
 assertDetected('@Eva542463644 fixed-partner keyword + emoji letter token',
   { handle: '@Eva542463644', displayName: '\u5bfb\u56fa\u70ae', text: 'X \u{1F680} \u{1F4BC}' }, 0.9);
+
+section('detectObviousBotReply — reported inserted-letter lure variants');
+assertDetected('@taysedocontra 30+ phrase variant',
+  { handle: '@taysedocontra', displayName: 'taysinhadocontra', text: '30+\u7684r \u4f53\u5236\u5185\u8001\u5e08 \u73a9\u7684\u5c31\u662f\u8fd4\u5dee @ChristineViu 2t' }, 0.9);
+assertDetected('@SgaviriaA sao variant',
+  { handle: '@SgaviriaA', displayName: 'Sebastian Gaviria', text: 'sao\u8d27p \u6ca1\u4eba\u6bd4\u5979sao\u2763\uFE0F @mengyyw 8l' }, 0.9);
+assertDetected('@kusurrumi sao variant #2',
+  { handle: '@kusurrumi', displayName: 'Kusurrumi', text: 'sao\u8d27g\u6ca1\u4eba\u6bd4\u5979sao\u2763\uFE0F @yunbaozw 4c' }, 0.9);
+assertDetected('@utitofon_ufot homepage can do it variant',
+  { handle: '@utitofon_ufot', displayName: 'utitofon ufot', text: '\u5237\u4e86\u534a\u5929a\u7684X\u5c31\u5979\u7684\u4e3b\u9875\u80fd\u6253\u2708\u4e86 @mengyyw 2l' }, 0.9);
+assertDetected('@mmfrancisco16 too-sexy variant',
+  { handle: '@mmfrancisco16', displayName: 'Francisco.', text: '\u5979\u592a\u6da9\u4e86q \u6211\u771f\u9876\u4e0d\u4f4f @mengyyw 4b' }, 0.9);
+assertDetected('@Jhoan_Sanchz too-sexy variant #2',
+  { handle: '@Jhoan_Sanchz', displayName: 'Jhoann S\u00E1nchez', text: '\u5979\u592a\u6da9\u4e86w \u6211\u771f\u9876\u4e0d\u4f4f @yunbaozw 3x' }, 0.9);
 
 section('detectObviousBotReply — long decorative inspirational bots');
 assertDetected('@Yaekn131039',

@@ -1354,7 +1354,11 @@ const ADULT_LURE_SHORTCOPY_PATTERNS = [
   /\u6bd4\u5979\u597d\u770b\u7684\u6ca1\u5979\u9a9a.*\u6bd4\u5979\u9a9a\u7684\u6ca1\u5979\u597d\u770b/u,
   /\u771f\u5b9e\u8d44\u6e90.*\u4e3b\u9875\u81ea\u53d6/u,
   /\u8fd9\u4e2a\u9a9a\u8d27/u,
-  /\u4e3b\u9875\u80fd\u6253/u
+  /\u4e3b\u9875\u80fd\u6253/u,
+  /30\+\s*\u7684[a-z]?\s*\u4f53\u5236\u5185\u8001\u5e08\s*\u73a9\u7684\u5c31\u662f\u8fd4?\u5dee/iu,
+  /sao\u8d27[a-z]?\s*\u6ca1\u4eba\u6bd4\u5979sao/iu,
+  /\u5237\u4e86\u534a\u5929[a-z]?\s*\u7684?x\u5c31\u5979\u7684\u4e3b\u9875\u80fd\u6253(?:\u2708\ufe0f?|\u98de\u673a)?\u4e86?/iu,
+  /\u5979\u592a\u6da9\u4e86[a-z]?\s*\u6211\u771f\u9876\u4e0d\u4f4f/iu
 ];
 
 function hasCloudDrivePromoSignal(text, customKeywords = []) {
@@ -1458,14 +1462,28 @@ function hasSuspiciousPromoText(text) {
   return LOCAL_RULE_SPAM_TEXT_PATTERNS.some(pattern => pattern.test(value));
 }
 
+function normalizeAdultLureShortCopyText(text) {
+  const compact = compactText(text).toLowerCase();
+  if (!compact) return '';
+
+  // Remove random single-letter noise commonly inserted between Chinese chunks.
+  return compact
+    .replace(/([\u4e00-\u9fff])[a-z](?=[\u4e00-\u9fff])/gu, '$1')
+    .replace(/(30\+的)[a-z](?=[\u4e00-\u9fff])/gu, '$1')
+    .replace(/(sao货)[a-z](?=[\u4e00-\u9fff])/gu, '$1')
+    .replace(/(她太涩了)[a-z](?=[\u4e00-\u9fff])/gu, '$1')
+    .replace(/(刷了半天)[a-z](?=的?x)/gu, '$1');
+}
+
 function hasAdultLureShortCopy(text) {
   const value = String(text || '');
   if (!value) return false;
 
   const compact = compactText(value).toLowerCase();
-  if (!compact || compact.length > 32) return false;
+  const normalized = normalizeAdultLureShortCopyText(value);
+  if ((!compact || compact.length > 64) && (!normalized || normalized.length > 64)) return false;
 
-  return ADULT_LURE_SHORTCOPY_PATTERNS.some(pattern => pattern.test(value));
+  return ADULT_LURE_SHORTCOPY_PATTERNS.some(pattern => pattern.test(value) || pattern.test(normalized));
 }
 
 function hasUrlLikeSignal(text) {
