@@ -701,6 +701,11 @@ async function addSelectedToQueue() {
       meta: { scannedCount: scannedTweetCount, candidateCount: candidates.length, sourceUrl: currentScanSource }
     });
     if (!resp?.ok) throw new Error(resp?.error || '加入队列失败');
+    if (Number(resp.added || 0) === 0) {
+      await refreshQueueStatus();
+      showNotice('没有新增屏蔽任务：这些账号可能已经在待处理队列中。', true);
+      return;
+    }
     await refreshQueueStatus();
 
     // Close analysis result view after enqueueing; blocking continues in background queue.

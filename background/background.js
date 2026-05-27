@@ -592,7 +592,11 @@ function clearCompletedBlockItems() {
 }
 
 function enqueueBlockAccounts(accounts, meta = {}) {
-  const seen = new Set(blockQueue.queue.map(i => i.handle.toLowerCase()));
+  const seen = new Set(
+    blockQueue.queue
+      .filter(i => i.status === 'pending' || i.status === 'running')
+      .map(i => i.handle.toLowerCase())
+  );
   let added = 0;
   const sessionId = Date.now();
 
