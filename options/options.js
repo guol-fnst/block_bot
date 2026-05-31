@@ -21,6 +21,150 @@ const scrapeScrollWaitMsInput = document.getElementById('scrape-scroll-wait-ms')
 const scrapeMaxRoundsInput = document.getElementById('scrape-max-rounds');
 const scrapeMaxTweetsInput = document.getElementById('scrape-max-tweets');
 const scrapeStagnantRoundsInput = document.getElementById('scrape-stagnant-rounds');
+const langSelect = document.getElementById('lang-select');
+
+const UI_LANG_KEY = 'uiLanguage';
+let uiLanguage = 'zh';
+
+const I18N = {
+  zh: {
+    pageTitle: 'Block Bot 设置',
+    sectionProviderTitle: '模型与 API 配置',
+    sectionProviderDesc: '支持 Gemini、Anthropic，以及主流 OpenAI 兼容接口；也可以填写自定义兼容端点。',
+    labelProvider: '提供商',
+    btnSaveConfig: '保存配置',
+    btnTestConfig: '测试配置',
+    sectionStrategyTitle: '屏蔽策略',
+    sectionStrategyDesc: '仅当模型判定概率达到该阈值时，账号才会出现在可屏蔽候选列表中。',
+    labelThreshold: '垃圾/机器人判定阈值（%）',
+    thresholdDesc: '例如设置为 90，则 89% 及以下不会进入屏蔽候选。',
+    labelKeywords: '本地预过滤关键词',
+    keywordsDesc: '这些关键词会匹配账号昵称和 handle。命中后还会结合极短回复、随机 ID 等信号，在调用 AI 前先进入候选。',
+    btnSaveThreshold: '保存阈值',
+    sectionPerformanceTitle: '性能调优',
+    sectionPerformanceDesc: '可按 API 配额与网络情况调节分析速度。并发和批量越大越快，但更容易触发服务商限流。',
+    btnSavePerformance: '保存性能参数',
+    sectionPromptTitle: '检测提示词（可自定义）',
+    sectionPromptDesc: '这里填写的是“高置信度特征”规则。留空则使用内置默认规则。保存后下次分析立即生效，无需重新打包插件。',
+    labelCustomPrompt: '自定义规则',
+    btnSavePrompt: '保存提示词',
+    sectionAboutTitle: '关于',
+    versionText: '版本 0.3.2',
+    errGeminiKeyRequired: '请输入 Gemini API Key',
+    errGeminiPrefix: 'Gemini Key 通常以 "AIza" 开头',
+    okGeminiSaved: 'Gemini 配置已保存 ✓',
+    errProviderUnsupported: '请选择受支持的模型提供商',
+    errApiUrlInvalid: '请输入 http:// 或 https:// 开头的 API URL',
+    errModelRequired: '请输入模型名',
+    errApiKeyRequired: '请输入 API Key',
+    errEndpointPermission: '未授予该 API 域名权限，无法保存自定义端点',
+    okProviderSaved: '模型配置已保存 ✓',
+    testingConfig: '正在测试模型配置…',
+    okConfigUsable: '测试通过，模型配置可用 ✓',
+    errConfigFailed: '测试失败：{msg}',
+    errThresholdRange: '屏蔽阈值必须在 50 到 100 之间',
+    okThresholdSaved: '屏蔽策略已保存 ✓',
+    okPromptReset: '已恢复为默认提示词 ✓',
+    okPromptSaved: '自定义提示词已保存 ✓',
+    okPerformanceSaved: '性能参数已保存 ✓',
+    unknownError: '未知错误'
+  },
+  en: {
+    pageTitle: 'Block Bot Settings',
+    sectionProviderTitle: 'Model & API Configuration',
+    sectionProviderDesc: 'Supports Gemini, Anthropic, and mainstream OpenAI-compatible APIs; custom compatible endpoints are also supported.',
+    labelProvider: 'Provider',
+    btnSaveConfig: 'Save Configuration',
+    btnTestConfig: 'Test Configuration',
+    sectionStrategyTitle: 'Blocking Strategy',
+    sectionStrategyDesc: 'Only accounts above this probability threshold are shown as block candidates.',
+    labelThreshold: 'Spam/Bot Confidence Threshold (%)',
+    thresholdDesc: 'For example, if set to 90, anything at 89% or below will not appear in candidates.',
+    labelKeywords: 'Local Prefilter Keywords',
+    keywordsDesc: 'Keywords match display names and handles. Hits are combined with short-reply/random-ID signals before AI calls.',
+    btnSaveThreshold: 'Save Threshold',
+    sectionPerformanceTitle: 'Performance Tuning',
+    sectionPerformanceDesc: 'Tune speed based on API quota and network. Larger batch/concurrency is faster but may trigger rate limits sooner.',
+    btnSavePerformance: 'Save Performance Settings',
+    sectionPromptTitle: 'Detection Prompt (Customizable)',
+    sectionPromptDesc: 'This defines high-confidence detection rules. Leave empty to use built-in defaults. Changes apply immediately on next analysis.',
+    labelCustomPrompt: 'Custom Rules',
+    btnSavePrompt: 'Save Prompt',
+    sectionAboutTitle: 'About',
+    versionText: 'Version 0.3.2',
+    errGeminiKeyRequired: 'Please enter a Gemini API key',
+    errGeminiPrefix: 'Gemini keys usually start with "AIza"',
+    okGeminiSaved: 'Gemini configuration saved ✓',
+    errProviderUnsupported: 'Please choose a supported provider',
+    errApiUrlInvalid: 'Please enter an API URL starting with http:// or https://',
+    errModelRequired: 'Please enter a model name',
+    errApiKeyRequired: 'Please enter an API key',
+    errEndpointPermission: 'Permission for this API domain was not granted, custom endpoint cannot be saved',
+    okProviderSaved: 'Model configuration saved ✓',
+    testingConfig: 'Testing model configuration...',
+    okConfigUsable: 'Configuration test passed ✓',
+    errConfigFailed: 'Test failed: {msg}',
+    errThresholdRange: 'Threshold must be between 50 and 100',
+    okThresholdSaved: 'Blocking strategy saved ✓',
+    okPromptReset: 'Restored to default prompt ✓',
+    okPromptSaved: 'Custom prompt saved ✓',
+    okPerformanceSaved: 'Performance settings saved ✓',
+    unknownError: 'Unknown error'
+  }
+};
+
+function t(key, vars = {}) {
+  const table = I18N[uiLanguage] || I18N.zh;
+  const fallback = I18N.zh;
+  const raw = table[key] || fallback[key] || key;
+  return raw.replace(/\{(\w+)\}/g, (_, k) => String(vars[k] ?? ''));
+}
+
+function setText(id, text) {
+  const el = document.getElementById(id);
+  if (el) el.textContent = text;
+}
+
+function detectUiLanguage() {
+  return /^zh\b/i.test(navigator.language || '') ? 'zh' : 'en';
+}
+
+async function loadUiLanguage() {
+  try {
+    const data = await chrome.storage.local.get([UI_LANG_KEY]);
+    const stored = data?.[UI_LANG_KEY];
+    uiLanguage = stored === 'zh' || stored === 'en' ? stored : detectUiLanguage();
+  } catch (_) {
+    uiLanguage = detectUiLanguage();
+  }
+}
+
+function applyStaticTranslations() {
+  document.documentElement.lang = uiLanguage === 'zh' ? 'zh-CN' : 'en';
+  document.title = t('pageTitle');
+  setText('text-page-title', `⚙ ${t('pageTitle')}`);
+  setText('text-provider-title', t('sectionProviderTitle'));
+  setText('text-provider-desc', t('sectionProviderDesc'));
+  setText('label-provider', t('labelProvider'));
+  setText('btn-save', t('btnSaveConfig'));
+  setText('btn-test-config', t('btnTestConfig'));
+  setText('text-strategy-title', t('sectionStrategyTitle'));
+  setText('text-strategy-desc', t('sectionStrategyDesc'));
+  setText('label-threshold', t('labelThreshold'));
+  setText('text-threshold-desc', t('thresholdDesc'));
+  setText('label-keywords', t('labelKeywords'));
+  setText('text-keywords-desc', t('keywordsDesc'));
+  setText('btn-save-threshold', t('btnSaveThreshold'));
+  setText('text-performance-title', t('sectionPerformanceTitle'));
+  setText('text-performance-desc', t('sectionPerformanceDesc'));
+  setText('btn-save-performance', t('btnSavePerformance'));
+  setText('text-prompt-title', t('sectionPromptTitle'));
+  setText('text-prompt-desc', t('sectionPromptDesc'));
+  setText('label-custom-prompt', t('labelCustomPrompt'));
+  setText('btn-save-prompt', t('btnSavePrompt'));
+  setText('text-about-title', t('sectionAboutTitle'));
+  setText('text-version', t('versionText'));
+}
 
 // Keep in sync with background.js defaultDetectionRules()
 const DEFAULT_DETECTION_RULES = [
@@ -260,48 +404,73 @@ function renderModelSuggestions(models) {
   });
 }
 
-chrome.storage.local.get(
-  [
-    'llmProvider',
-    'geminiApiKey',
-    'geminiModel',
-    'openaiApiKey',
-    'openaiApiUrl',
-    'openaiModel',
-    'spamConfidenceThreshold',
-    'obviousBotKeywords',
-    'customDetectionPrompt',
-    'analysisBatchSize',
-    'analysisParallelism',
-    'scrapeScrollWaitMs',
-    'scrapeMaxRounds',
-    'scrapeMaxTweets',
-    'scrapeStagnantRounds'
-  ],
-  d => {
-    providerSel.value = normalizeProvider(d.llmProvider || 'gemini');
-    geminiKeyInput.value = d.geminiApiKey || '';
-    geminiModelSel.value = d.geminiModel || 'auto';
-    openaiKeyInput.value = d.openaiApiKey || '';
-    openaiUrlInput.value = d.openaiApiUrl || '';
-    openaiModelInput.value = d.openaiModel || '';
-    spamThresholdInput.value = String(Math.round(normalizeThreshold(d.spamConfidenceThreshold) * 100));
-    obviousBotKeywordsInput.value = Array.isArray(d.obviousBotKeywords)
-      ? d.obviousBotKeywords.join('\n')
-      : '';
-    analysisBatchSizeInput.value = String(normalizeAnalysisBatchSize(d.analysisBatchSize));
-    analysisParallelismInput.value = String(normalizeAnalysisParallelism(d.analysisParallelism));
-    scrapeScrollWaitMsInput.value = String(normalizeScrapeScrollWaitMs(d.scrapeScrollWaitMs));
-    scrapeMaxRoundsInput.value = String(normalizeScrapeMaxRounds(d.scrapeMaxRounds));
-    scrapeMaxTweetsInput.value = String(normalizeScrapeMaxTweets(d.scrapeMaxTweets));
-    scrapeStagnantRoundsInput.value = String(normalizeScrapeStagnantRounds(d.scrapeStagnantRounds));
-    customPromptInput.value = (typeof d.customDetectionPrompt === 'string' && d.customDetectionPrompt.trim())
-      ? d.customDetectionPrompt
-      : DEFAULT_DETECTION_RULES;
-    renderProviderFields(providerSel.value);
-    applyPresetIfNeeded(providerSel.value);
+function loadSettings() {
+  chrome.storage.local.get(
+    [
+      'llmProvider',
+      'geminiApiKey',
+      'geminiModel',
+      'openaiApiKey',
+      'openaiApiUrl',
+      'openaiModel',
+      'spamConfidenceThreshold',
+      'obviousBotKeywords',
+      'customDetectionPrompt',
+      'analysisBatchSize',
+      'analysisParallelism',
+      'scrapeScrollWaitMs',
+      'scrapeMaxRounds',
+      'scrapeMaxTweets',
+      'scrapeStagnantRounds'
+    ],
+    d => {
+      providerSel.value = normalizeProvider(d.llmProvider || 'gemini');
+      geminiKeyInput.value = d.geminiApiKey || '';
+      geminiModelSel.value = d.geminiModel || 'auto';
+      openaiKeyInput.value = d.openaiApiKey || '';
+      openaiUrlInput.value = d.openaiApiUrl || '';
+      openaiModelInput.value = d.openaiModel || '';
+      spamThresholdInput.value = String(Math.round(normalizeThreshold(d.spamConfidenceThreshold) * 100));
+      obviousBotKeywordsInput.value = Array.isArray(d.obviousBotKeywords)
+        ? d.obviousBotKeywords.join('\n')
+        : '';
+      analysisBatchSizeInput.value = String(normalizeAnalysisBatchSize(d.analysisBatchSize));
+      analysisParallelismInput.value = String(normalizeAnalysisParallelism(d.analysisParallelism));
+      scrapeScrollWaitMsInput.value = String(normalizeScrapeScrollWaitMs(d.scrapeScrollWaitMs));
+      scrapeMaxRoundsInput.value = String(normalizeScrapeMaxRounds(d.scrapeMaxRounds));
+      scrapeMaxTweetsInput.value = String(normalizeScrapeMaxTweets(d.scrapeMaxTweets));
+      scrapeStagnantRoundsInput.value = String(normalizeScrapeStagnantRounds(d.scrapeStagnantRounds));
+      customPromptInput.value = (typeof d.customDetectionPrompt === 'string' && d.customDetectionPrompt.trim())
+        ? d.customDetectionPrompt
+        : DEFAULT_DETECTION_RULES;
+      renderProviderFields(providerSel.value);
+      applyPresetIfNeeded(providerSel.value);
+      applyStaticTranslations();
+    }
+  );
+}
+
+async function initPage() {
+  await loadUiLanguage();
+  if (langSelect) {
+    langSelect.value = uiLanguage;
+    langSelect.addEventListener('change', async () => {
+      uiLanguage = langSelect.value === 'en' ? 'en' : 'zh';
+      try {
+        await chrome.storage.local.set({ [UI_LANG_KEY]: uiLanguage });
+      } catch (_) {}
+      applyStaticTranslations();
+      applyPresetIfNeeded(providerSel.value);
+    });
   }
-);
+  applyStaticTranslations();
+  loadSettings();
+}
+
+initPage().catch(() => {
+  applyStaticTranslations();
+  loadSettings();
+});
 
 providerSel.addEventListener('change', () => {
   const selected = providerSel.value;
@@ -328,11 +497,11 @@ async function saveProviderConfig(showSuccess = true) {
     const key = geminiKeyInput.value.trim();
     const model = geminiModelSel.value || 'auto';
     if (!key) {
-      showMsg('请输入 Gemini API Key', false);
+      showMsg(t('errGeminiKeyRequired'), false);
       return false;
     }
     if (!key.startsWith('AIza')) {
-      showMsg('Gemini Key 通常以 "AIza" 开头', false);
+      showMsg(t('errGeminiPrefix'), false);
       return false;
     }
 
@@ -341,13 +510,13 @@ async function saveProviderConfig(showSuccess = true) {
       geminiApiKey: key,
       geminiModel: model
     });
-    if (showSuccess) showMsg('Gemini 配置已保存 ✓', true);
+    if (showSuccess) showMsg(t('okGeminiSaved'), true);
     return true;
   }
 
   const preset = PRESETS[selected];
   if (!preset) {
-    showMsg('请选择受支持的模型提供商', false);
+    showMsg(t('errProviderUnsupported'), false);
     return false;
   }
 
@@ -358,22 +527,22 @@ async function saveProviderConfig(showSuccess = true) {
   const model = openaiModelInput.value.trim() || preset.model;
 
   if (!apiUrl || !/^https?:\/\/.+/i.test(apiUrl)) {
-    showMsg('请输入 http:// 或 https:// 开头的 API URL', false);
+    showMsg(t('errApiUrlInvalid'), false);
     return false;
   }
   if (!model) {
-    showMsg('请输入模型名', false);
+    showMsg(t('errModelRequired'), false);
     return false;
   }
   if (!apiKey) {
-    showMsg('请输入 API Key', false);
+    showMsg(t('errApiKeyRequired'), false);
     return false;
   }
 
   if (selected === 'custom_openai') {
     const granted = await requestCustomEndpointPermission(apiUrl);
     if (!granted) {
-      showMsg('未授予该 API 域名权限，无法保存自定义端点', false);
+      showMsg(t('errEndpointPermission'), false);
       return false;
     }
   }
@@ -385,7 +554,7 @@ async function saveProviderConfig(showSuccess = true) {
     openaiModel: model,
     openaiApiType: preset.apiType
   });
-  if (showSuccess) showMsg('模型配置已保存 ✓', true);
+  if (showSuccess) showMsg(t('okProviderSaved'), true);
   return true;
 }
 
@@ -399,13 +568,13 @@ testConfigBtn.addEventListener('click', async () => {
 
   testConfigBtn.disabled = true;
   saveBtn.disabled = true;
-  showMsg('正在测试模型配置…', true);
+  showMsg(t('testingConfig'), true);
   try {
     const resp = await chrome.runtime.sendMessage({ action: 'testProviderConfig' });
-    if (!resp?.ok) throw new Error(resp?.error || '测试失败');
-    showMsg('测试通过，模型配置可用 ✓', true);
+    if (!resp?.ok) throw new Error(resp?.error || t('unknownError'));
+    showMsg(t('okConfigUsable'), true);
   } catch (e) {
-    showMsg('测试失败：' + e.message, false);
+    showMsg(t('errConfigFailed', { msg: e.message }), false);
   } finally {
     testConfigBtn.disabled = false;
     saveBtn.disabled = false;
@@ -446,7 +615,7 @@ document.getElementById('btn-save-threshold').addEventListener('click', () => {
   const thresholdPct = Number(spamThresholdInput.value);
 
   if (!Number.isFinite(thresholdPct) || thresholdPct < 50 || thresholdPct > 100) {
-    showThresholdMsg('屏蔽阈值必须在 50 到 100 之间', false);
+    showThresholdMsg(t('errThresholdRange'), false);
     return;
   }
 
@@ -455,7 +624,7 @@ document.getElementById('btn-save-threshold').addEventListener('click', () => {
       spamConfidenceThreshold: normalizeThreshold(thresholdPct / 100),
       obviousBotKeywords: parseKeywordList(obviousBotKeywordsInput.value)
     },
-    () => showThresholdMsg('屏蔽策略已保存 ✓', true)
+    () => showThresholdMsg(t('okThresholdSaved'), true)
   );
 });
 
@@ -465,7 +634,7 @@ document.getElementById('btn-save-prompt').addEventListener('click', () => {
   const isDefault = val === DEFAULT_DETECTION_RULES;
   chrome.storage.local.set(
     { customDetectionPrompt: isDefault ? '' : val },
-    () => showPromptMsg(isDefault ? '已恢复为默认提示词 ✓' : '自定义提示词已保存 ✓', true)
+    () => showPromptMsg(isDefault ? t('okPromptReset') : t('okPromptSaved'), true)
   );
 });
 
@@ -493,7 +662,7 @@ document.getElementById('btn-save-performance').addEventListener('click', () => 
       scrapeMaxTweets,
       scrapeStagnantRounds
     },
-    () => showPerformanceMsg('性能参数已保存 ✓', true)
+    () => showPerformanceMsg(t('okPerformanceSaved'), true)
   );
 });
 

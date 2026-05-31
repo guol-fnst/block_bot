@@ -11,11 +11,24 @@ body {
 
 .container { max-width: 500px; }
 
+.page-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 18px;
+}
+
+.lang-select {
+  max-width: 84px;
+  margin-bottom: 0;
+}
+
 h1 {
   font-size: 20px;
   font-weight: 700;
   color: #1d9bf0;
-  margin-bottom: 24px;
+  margin-bottom: 0;
 }
 
 h2 {

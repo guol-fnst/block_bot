@@ -1,0 +1,192 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Block Bot 隐私政策</title>
+  <style>
+    :root {
+      --bg: #f8fafc;
+      --card: #ffffff;
+      --text: #0f172a;
+      --muted: #475569;
+      --border: #e2e8f0;
+      --accent: #0ea5a4;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      font-family: "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+      background: linear-gradient(180deg, #ecfeff 0%, var(--bg) 35%);
+      color: var(--text);
+      line-height: 1.75;
+    }
+
+    main {
+      max-width: 900px;
+      margin: 40px auto;
+      padding: 0 20px;
+    }
+
+    article {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 28px;
+      box-shadow: 0 10px 28px rgba(2, 6, 23, 0.06);
+    }
+
+    h1 {
+      margin-top: 0;
+      margin-bottom: 8px;
+      font-size: 34px;
+      letter-spacing: -0.02em;
+    }
+
+    h2 {
+      margin-top: 28px;
+      margin-bottom: 10px;
+      font-size: 24px;
+      border-left: 4px solid var(--accent);
+      padding-left: 10px;
+    }
+
+    p {
+      margin: 10px 0;
+    }
+
+    ul {
+      margin: 8px 0 10px;
+      padding-left: 24px;
+    }
+
+    li {
+      margin: 6px 0;
+    }
+
+    .meta {
+      color: var(--muted);
+      margin-top: 0;
+      margin-bottom: 18px;
+      font-weight: 600;
+    }
+
+    .lang-switch {
+      margin: 0 0 20px;
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    .lang-switch a {
+      display: inline-block;
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      padding: 4px 12px;
+      text-decoration: none;
+      color: #0f172a;
+      background: #f8fafc;
+      font-size: 14px;
+    }
+
+    .lang-switch a.active {
+      border-color: var(--accent);
+      color: #0f766e;
+      background: #ecfeff;
+      font-weight: 700;
+    }
+
+    a { color: #0369a1; }
+  </style>
+</head>
+<body>
+  <main>
+    <article>
+      <h1>Block Bot 隐私政策</h1>
+      <p class="meta">最近更新：2026-05-11</p>
+      <nav class="lang-switch" aria-label="语言切换">
+        <a href="./privacy-policy.html">English</a>
+        <a class="active" href="./privacy-policy.zh-CN.html">简体中文</a>
+      </nav>
+
+      <p>本隐私政策说明 Block Bot 如何处理信息。</p>
+
+      <h2>1. 我们是谁</h2>
+      <p>Block Bot 是一个浏览器扩展，帮助用户在 x.com / twitter.com 上审查当前可见推文，并在用户确认后，对疑似垃圾账号或机器人账号执行本地屏蔽。</p>
+      <p>联系方式：support@blockbot-extension.com</p>
+
+      <h2>2. 我们会访问哪些数据</h2>
+      <p>当用户在 X 页面发起分析时，Block Bot 可能访问：</p>
+      <ul>
+        <li>当前页面可见的推文文本</li>
+        <li>账号 handle</li>
+        <li>显示名称</li>
+        <li>推文链接</li>
+        <li>个人主页链接</li>
+      </ul>
+      <p>当用户确认执行屏蔽时，Block Bot 可能使用浏览器中现有的 X 登录会话上下文，在本地完成相关操作。</p>
+
+      <h2>3. 我们如何使用这些数据</h2>
+      <p>我们仅将访问到的数据用于：</p>
+      <ul>
+        <li>分析可见推文并识别疑似垃圾/机器人账号</li>
+        <li>向用户展示候选账号供复核</li>
+        <li>在 X 上执行用户确认后的本地屏蔽操作</li>
+        <li>保存本地扩展配置、队列状态和临时分析缓存</li>
+      </ul>
+
+      <h2>4. 数据共享与第三方</h2>
+      <p>当前版本的 Block Bot 不运营自有分析后端。</p>
+      <p>若用户启用分析，候选数据将直接从浏览器发送到用户配置的第三方模型服务商，例如 Google Gemini、OpenAI、Anthropic、DeepSeek、Qwen、xAI、OpenRouter、Groq、Mistral AI、Together AI、SiliconFlow、Moonshot、智谱 GLM、火山方舟 Doubao，或其他用户配置的 OpenAI 兼容端点。上述服务商将依据其各自条款与隐私政策处理数据。</p>
+
+      <h2>5. 数据存储</h2>
+      <p>Block Bot 在 Chrome 扩展存储中本地保存以下信息：</p>
+      <ul>
+        <li>模型服务商选择</li>
+        <li>API 端点配置</li>
+        <li>用户输入的 API Key</li>
+        <li>临时分析结果</li>
+        <li>屏蔽队列状态</li>
+      </ul>
+      <p>默认保留策略：</p>
+      <ul>
+        <li>分析缓存为临时数据，用户可随时清理</li>
+        <li>服务商配置会保留，直到用户修改配置或卸载扩展</li>
+        <li>队列状态用于任务连续性，删除扩展存储后会被移除</li>
+      </ul>
+
+      <h2>6. 数据安全</h2>
+      <ul>
+        <li>发送到第三方模型服务的数据通过 HTTPS 传输。</li>
+        <li>Block Bot 不会主动将本地存储配置发送到 Block Bot 自有服务器。</li>
+      </ul>
+
+      <h2>7. 有限使用承诺</h2>
+      <ul>
+        <li>我们不会出售用户数据。</li>
+        <li>我们不会将用户数据用于广告投放。</li>
+        <li>我们不会将用户数据转交给数据经纪商。</li>
+        <li>我们仅将数据用于上述用户可见功能。</li>
+      </ul>
+
+      <h2>8. 用户控制</h2>
+      <p>用户可自行决定是否：</p>
+      <ul>
+        <li>发起分析</li>
+        <li>选择模型服务商</li>
+        <li>填写 API Key</li>
+        <li>确认要屏蔽的账号</li>
+      </ul>
+      <p>用户可随时卸载扩展，并可通过 Chrome 扩展管理清理扩展数据。</p>
+
+      <h2>9. 后台标签页行为</h2>
+      <p>为了更可靠地完成部分用户确认后的屏蔽任务，Block Bot 可能临时打开或复用一个后台 X 页面，并在该页面执行本地操作。</p>
+
+      <h2>10. 隐私政策变更</h2>
+      <p>我们可能不定期更新本隐私政策。页面顶部显示的日期为最近更新时间。</p>
+    </article>
+  </main>
+</body>
+</html>

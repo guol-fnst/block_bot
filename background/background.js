@@ -324,7 +324,8 @@ async function restorePersistedState() {
     blockQueue.queue = (bq.queue || []).map(i => ({
       ...i,
       // Items that were mid-block when the SW died must be retried.
-      status: i.status === 'running' ? 'pending' : i.status
+      status: i.status === 'running' ? 'pending' : i.status,
+      actionType: normalizeModerationAction(i.actionType)
     }));
     blockQueue.log     = bq.log     || [];
     blockQueue.paused  = bq.paused  || false;
@@ -466,10 +467,15 @@ function executeInTab(tabId, fn, args) {
   });
 }
 
-async function blockViaHiddenTab(handle) {
+function normalizeModerationAction(actionType) {
+  return actionType === 'hide' ? 'hide' : 'block';
+}
+
+async function performModerationActionViaHiddenTab(handle, actionType = 'block') {
   const handleSlug = String(handle || '').replace('@', '').trim();
+  const mode = normalizeModerationAction(actionType);
   if (!handleSlug) {
-    throw new Error('无效 handle，无法后台屏蔽');
+    throw new Error('无效 handle，无法执行后台操作');
   }
 
   const tabId = await ensureWorkerTab();
@@ -479,7 +485,7 @@ async function blockViaHiddenTab(handle) {
 
   const result = await executeInTab(
       tabId,
-      async slug => {
+      async (slug, action) => {
         const sleep = ms => new Promise(r => setTimeout(r, ms));
         const waitFor = async (selector, timeout = 7000) => {
           const s = Date.now();
@@ -507,40 +513,69 @@ async function blockViaHiddenTab(handle) {
         moreBtn.click();
         await sleep(260);
 
-        const blockItem =
-          (await waitFor('[data-testid="block"]', 4500)) ||
-          document.querySelector('[role="menuitem"][aria-label*="Block"]') ||
-          document.querySelector('[role="menuitem"][aria-label*="屏蔽"]') ||
-          // #12 fix: text-based fallback for other UI languages
-          // Use word-boundary so "Unblock" / "Entblockieren" etc. are NOT matched.
-          Array.from(document.querySelectorAll('[role="menuitem"]')).find(el => /\bblock\b/i.test(el.textContent || ''));
+        const menuItem = action === 'hide'
+          ? (
+              (await waitFor('[data-testid="mute"]', 4500)) ||
+              document.querySelector('[role="menuitem"][aria-label*="Mute"]') ||
+              document.querySelector('[role="menuitem"][aria-label*="静音"]') ||
+              document.querySelector('[role="menuitem"][aria-label*="隐藏"]') ||
+              Array.from(document.querySelectorAll('[role="menuitem"]')).find(el => {
+                const text = (el.textContent || '').toLowerCase();
+                return /\bmute\b/.test(text) || /静音|隐藏/.test(text);
+              })
+            )
+          : (
+              (await waitFor('[data-testid="block"]', 4500)) ||
+              document.querySelector('[role="menuitem"][aria-label*="Block"]') ||
+              document.querySelector('[role="menuitem"][aria-label*="屏蔽"]') ||
+              // #12 fix: text-based fallback for other UI languages
+              // Use word-boundary so "Unblock" / "Entblockieren" etc. are NOT matched.
+              Array.from(document.querySelectorAll('[role="menuitem"]')).find(el => /\bblock\b/i.test(el.textContent || ''))
+            );
 
-        if (!blockItem) {
-          const maybeUnblock = document.querySelector('[data-testid="unblock"]');
-          if (maybeUnblock) {
+        if (!menuItem) {
+          const alreadyDone = action === 'hide'
+            ? document.querySelector('[data-testid="unmute"]') ||
+              document.querySelector('[role="menuitem"][aria-label*="Unmute"]') ||
+              document.querySelector('[role="menuitem"][aria-label*="取消静音"]')
+            : document.querySelector('[data-testid="unblock"]');
+          if (alreadyDone) {
             return { ok: true, alreadyBlocked: true };
           }
-          return { ok: false, error: `后台页未找到屏蔽菜单项 @${slug}` };
+          return {
+            ok: false,
+            error: action === 'hide'
+              ? `后台页未找到隐藏/静音菜单项 @${slug}`
+              : `后台页未找到屏蔽菜单项 @${slug}`
+          };
         }
 
-        blockItem.click();
+        menuItem.click();
 
-        const confirmBtn = await waitFor('[data-testid="confirmationSheetConfirm"]', 7000);
+        const confirmBtn = await waitFor('[data-testid="confirmationSheetConfirm"]', action === 'block' ? 7000 : 2200);
         if (!confirmBtn) {
-          return { ok: false, error: `后台页未找到屏蔽确认按钮 @${slug}` };
+          if (action === 'block') {
+            return { ok: false, error: `后台页未找到屏蔽确认按钮 @${slug}` };
+          }
+          await sleep(450);
+          return { ok: true };
         }
 
         confirmBtn.click();
         await sleep(800);
         return { ok: true };
       },
-      [handleSlug]
+      [handleSlug, mode]
     );
 
   if (!result?.ok) {
-    throw new Error(result?.error || `后台屏蔽失败：${handle}`);
+    throw new Error(result?.error || `后台操作失败：${handle}`);
   }
   return { ok: true };
+}
+
+async function blockViaHiddenTab(handle) {
+  return performModerationActionViaHiddenTab(handle, 'block');
 }
 
 function getBlockStatusSnapshot() {
@@ -592,10 +627,11 @@ function clearCompletedBlockItems() {
 }
 
 function enqueueBlockAccounts(accounts, meta = {}) {
+  const defaultActionType = normalizeModerationAction(meta.actionType);
   const seen = new Set(
     blockQueue.queue
       .filter(i => i.status === 'pending' || i.status === 'running')
-      .map(i => i.handle.toLowerCase())
+      .map(i => `${i.handle.toLowerCase()}|${normalizeModerationAction(i.actionType)}`)
   );
   let added = 0;
   const sessionId = Date.now();
@@ -604,11 +640,13 @@ function enqueueBlockAccounts(accounts, meta = {}) {
     const rawHandle = (a && a.handle ? a.handle : '').trim();
     if (!rawHandle) return;
     const handle = rawHandle.startsWith('@') ? rawHandle : `@${rawHandle}`;
-    const key = handle.toLowerCase();
+    const actionType = normalizeModerationAction(a?.actionType || defaultActionType);
+    const key = `${handle.toLowerCase()}|${actionType}`;
     if (seen.has(key)) return;
     seen.add(key);
     blockQueue.queue.push({
       handle,
+      actionType,
       status: 'pending',
       attempts: 0,
       lastError: '',
@@ -624,6 +662,7 @@ function enqueueBlockAccounts(accounts, meta = {}) {
       sourceUrl: String(meta.sourceUrl || ''),
       scannedCount: Number(meta.scannedCount) || 0,
       candidateCount: Number(meta.candidateCount) || 0,
+      actionType: defaultActionType,
       enqueuedCount: added,
       done: 0,
       failed: 0
@@ -656,13 +695,15 @@ async function runGlobalBlockQueue() {
       item.status = 'running';
       item.attempts += 1;
       blockQueue.current = item.handle;
+      const actionType = normalizeModerationAction(item.actionType);
 
       try {
-        await blockViaHiddenTab(item.handle);
+        await performModerationActionViaHiddenTab(item.handle, actionType);
         item.status = 'done';
         blockQueue.consecutiveFails = 0;
         blockQueue.log.push({
           handle: item.handle,
+          actionType,
           status: 'done',
           mode: 'background-ui',
           time: Date.now()
@@ -677,6 +718,7 @@ async function runGlobalBlockQueue() {
         blockQueue.consecutiveFails += 1;
         blockQueue.log.push({
           handle: item.handle,
+          actionType,
           status: 'failed',
           mode: 'background-ui',
           error: item.lastError,
@@ -2319,12 +2361,13 @@ async function startAnalysisForTab(tabId, overrides = {}) {
 
     let autoQueued = false;
     if (merged.length > 0) {
-      const settings = await storageGet(['autoBlock']).catch(() => ({}));
+      const settings = await storageGet(['autoBlock', 'moderationAction']).catch(() => ({}));
       if (Boolean(settings.autoBlock)) {
         const added = enqueueBlockAccounts(merged, {
           scannedCount: allTweets.length,
           candidateCount: merged.length,
-          sourceUrl: analysisSourceUrl
+          sourceUrl: analysisSourceUrl,
+          actionType: normalizeModerationAction(settings.moderationAction)
         });
         if (added > 0) {
           autoQueued = true;
@@ -2814,7 +2857,7 @@ chrome.tabs.onRemoved.addListener(tabId => {
 // ── Message handler ───────────────────────────────────────────────────────────
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   if (msg.action === 'backgroundUiBlock') {
-    blockViaHiddenTab(msg.handle)
+    performModerationActionViaHiddenTab(msg.handle, msg.actionType)
       .then(() => sendResponse({ ok: true }))
       .catch(e => sendResponse({ ok: false, error: e.message }));
     return true;
@@ -2829,7 +2872,9 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
 
   if (msg.action === 'enqueueGlobalBlockText') {
     const accounts = parseHandlesFromText(msg.text || '');
-    const added = enqueueBlockAccounts(accounts);
+    const added = enqueueBlockAccounts(accounts, {
+      actionType: normalizeModerationAction(msg.actionType)
+    });
     runGlobalBlockQueue();
     sendResponse({ ok: true, added, status: getBlockStatusSnapshot() });
     return false;

@@ -3,8 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Block Bot Privacy Policy</title>
-  <meta http-equiv="refresh" content="0; url=./privacy-policy.html" />
+  <title>Block Bot Privacy Policy / 隐私政策</title>
   <style>
     body {
       margin: 0;
@@ -20,16 +19,45 @@
       border: 1px solid #e2e8f0;
       border-radius: 12px;
     }
+    .lang-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 12px;
+      margin-top: 16px;
+    }
+    .lang-card {
+      display: block;
+      border: 1px solid #cbd5e1;
+      border-radius: 10px;
+      padding: 14px;
+      background: #f8fafc;
+      color: #0f172a;
+      text-decoration: none;
+    }
+    .lang-card:hover {
+      border-color: #0ea5a4;
+      background: #ecfeff;
+    }
+    @media (max-width: 640px) {
+      .lang-grid { grid-template-columns: 1fr; }
+    }
     a { color: #0369a1; }
   </style>
 </head>
 <body>
   <main class="wrap">
     <h1>Block Bot Privacy Policy</h1>
-    <p>正在跳转到隐私政策页面。</p>
-    <p>如果没有自动跳转，请点击：
-      <a href="./privacy-policy.html">privacy-policy.html</a>
-    </p>
+    <p>Select your language / 选择语言：</p>
+    <div class="lang-grid">
+      <a class="lang-card" href="./privacy-policy.html">
+        <strong>English</strong>
+        <p>Open the English privacy policy.</p>
+      </a>
+      <a class="lang-card" href="./privacy-policy.zh-CN.html">
+        <strong>简体中文</strong>
+        <p>打开中文隐私政策。</p>
+      </a>
+    </div>
   </main>
 </body>
 </html>

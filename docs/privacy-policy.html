@@ -73,6 +73,31 @@
       font-weight: 600;
     }
 
+    .lang-switch {
+      margin: 0 0 20px;
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    .lang-switch a {
+      display: inline-block;
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      padding: 4px 12px;
+      text-decoration: none;
+      color: #0f172a;
+      background: #f8fafc;
+      font-size: 14px;
+    }
+
+    .lang-switch a.active {
+      border-color: var(--accent);
+      color: #0f766e;
+      background: #ecfeff;
+      font-weight: 700;
+    }
+
     a { color: #0369a1; }
   </style>
 </head>
@@ -81,6 +106,10 @@
     <article>
       <h1>Block Bot Privacy Policy</h1>
       <p class="meta">Last updated: 2026-05-11</p>
+      <nav class="lang-switch" aria-label="Language switch">
+        <a class="active" href="./privacy-policy.html">English</a>
+        <a href="./privacy-policy.zh-CN.html">简体中文</a>
+      </nav>
 
       <p>This Privacy Policy describes how Block Bot handles information.</p>
 

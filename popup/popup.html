@@ -11,20 +11,26 @@
   <!-- ── Header ─────────────────────────────────────────────────────────── -->
   <header class="header">
     <span class="logo">🛡 Block Bot</span>
-    <button class="btn-icon" id="btn-options" title="设置">⚙</button>
+    <div class="header-actions">
+      <select id="lang-select" class="lang-select" aria-label="Language">
+        <option value="zh">中文</option>
+        <option value="en">EN</option>
+      </select>
+      <button class="btn-icon" id="btn-options" title="设置">⚙</button>
+    </div>
   </header>
 
   <!-- ── View: not on x.com ─────────────────────────────────────────────── -->
   <section id="view-not-x" class="view hidden">
     <div class="notice">
       <span class="notice-icon">ℹ️</span>
-      <p>当前不是 x.com/twitter.com 页面。你仍可在下方查看屏蔽进度并追加屏蔽账号。</p>
+      <p id="text-not-x-msg">当前不是 x.com/twitter.com 页面。你仍可在下方查看屏蔽进度并追加屏蔽账号。</p>
     </div>
   </section>
 
   <!-- ── View: idle ─────────────────────────────────────────────────────── -->
   <section id="view-idle" class="view">
-    <p class="hint">
+    <p id="text-idle-hint" class="hint">
       点击下方按钮扫描当前页面已显示的推文。本地规则无需 API；开启 AI 分析后，会在本地规则之外调用你配置的模型辅助判断。
     </p>
   </section>
@@ -60,7 +66,7 @@
     </div>
     <ul id="candidate-list" class="candidate-list"></ul>
     <details id="ai-only-section" class="ai-only-section hidden">
-      <summary class="ai-only-summary">🤖 AI 发现但本地规则未识别 <span id="ai-only-count"></span>（可用于丰富本地规则）</summary>
+      <summary class="ai-only-summary" id="ai-only-summary">🤖 AI 发现但本地规则未识别 <span id="ai-only-count"></span>（可用于丰富本地规则）</summary>
       <ul id="ai-only-list" class="ai-only-list"></ul>
     </details>
     <div class="result-actions-bottom">
@@ -79,21 +85,28 @@
       <label class="toggle-label" for="toggle-auto-block">
         <input type="checkbox" id="toggle-auto-block" />
         <span class="toggle-switch"></span>
-        <span class="toggle-text">自动屏蔽模式（无需确认，完成后自动关闭）</span>
+        <span class="toggle-text" id="text-auto-block">自动屏蔽模式（无需确认，完成后自动关闭）</span>
       </label>
     </div>
     <div class="analysis-mode-row">
       <label class="toggle-label" for="toggle-ai-analysis">
         <input type="checkbox" id="toggle-ai-analysis" />
         <span class="toggle-switch"></span>
-        <span class="toggle-text">AI 分析（可选；关闭时只使用本地规则，不需要配置 API）</span>
+        <span class="toggle-text" id="text-ai-analysis">AI 分析（可选；关闭时只使用本地规则，不需要配置 API）</span>
       </label>
+    </div>
+    <div class="action-mode-row">
+      <label class="field-label inline" id="label-action-mode" for="select-action-mode">执行动作</label>
+      <select id="select-action-mode" class="action-select">
+        <option value="block" id="option-action-block">屏蔽</option>
+        <option value="hide" id="option-action-hide">隐藏</option>
+      </select>
     </div>
     <section id="review-prompt" class="review-prompt hidden">
       <button class="review-close" id="btn-review-dismiss" title="关闭">×</button>
       <div class="review-kicker">Block Bot</div>
-      <p class="review-title">觉得顺手的话，给个好评吧</p>
-      <p class="review-copy">如果它确实帮你省下了清理垃圾账号的时间，一个评分会很有帮助。</p>
+      <p class="review-title" id="text-review-title">觉得顺手的话，给个好评吧</p>
+      <p class="review-copy" id="text-review-copy">如果它确实帮你省下了清理垃圾账号的时间，一个评分会很有帮助。</p>
       <div class="review-actions">
         <button class="btn btn-primary" id="btn-review-rate" type="button">去评价</button>
         <button class="btn btn-secondary" id="btn-review-later" type="button">稍后再说</button>
@@ -119,23 +132,23 @@
   <div id="modal-deep-scan" class="modal hidden">
     <div class="modal-content">
       <div class="modal-header">
-        <h2>🔍 深度扫描某博主的回复</h2>
+        <h2 id="text-deep-scan-title">🔍 深度扫描某博主的回复</h2>
         <button class="modal-close" id="modal-close-deep-scan">&times;</button>
       </div>
       <div class="modal-body">
-        <label class="field-label" for="deep-scan-handle">博主 Handle（例：@xxx）</label>
+        <label class="field-label" for="deep-scan-handle" id="label-deep-scan-handle">博主 Handle（例：@xxx）</label>
         <input id="deep-scan-handle" class="input" placeholder="@" />
 
-        <label class="field-label" for="deep-scan-posts">最多采集帖子数</label>
+        <label class="field-label" for="deep-scan-posts" id="label-deep-scan-posts">最多采集帖子数</label>
         <input id="deep-scan-posts" class="input input-number" type="number" value="20" min="1" max="100" />
 
-        <label class="field-label" for="deep-scan-replies">每条帖子最多回复数</label>
+        <label class="field-label" for="deep-scan-replies" id="label-deep-scan-replies">每条帖子最多回复数</label>
         <input id="deep-scan-replies" class="input input-number" type="number" value="100" min="10" max="500" />
 
-        <label class="field-label" for="deep-scan-total">总回复数上限</label>
+        <label class="field-label" for="deep-scan-total" id="label-deep-scan-total">总回复数上限</label>
         <input id="deep-scan-total" class="input input-number" type="number" value="1000" min="50" max="5000" />
 
-        <p class="desc small">
+        <p class="desc small" id="text-deep-scan-desc">
           深度扫描会逐条打开帖子采集回复，速度较慢。建议先用默认配置试试。
         </p>
       </div>
@@ -153,9 +166,9 @@
       <p id="deep-scan-msg">正在采集…</p>
     </div>
     <div class="deep-scan-stats">
-      <p>已采集帖子：<strong id="deep-scan-posts-count">0</strong></p>
-      <p>已采集回复：<strong id="deep-scan-replies-count">0</strong></p>
-      <p>找到疑似账号：<strong id="deep-scan-candidates-count">0</strong></p>
+      <p><span id="text-deep-scan-posts">已采集帖子：</span><strong id="deep-scan-posts-count">0</strong></p>
+      <p><span id="text-deep-scan-replies">已采集回复：</span><strong id="deep-scan-replies-count">0</strong></p>
+      <p><span id="text-deep-scan-candidates">找到疑似账号：</span><strong id="deep-scan-candidates-count">0</strong></p>
     </div>
     <div class="deep-scan-actions">
       <button class="btn btn-secondary" id="btn-deep-scan-pause">暂停</button>
@@ -192,7 +205,7 @@
   <div id="modal-block-details" class="modal hidden">
     <div class="modal-content modal-content-details">
       <div class="modal-header">
-        <h2>📋 屏蔽记录详情</h2>
+        <h2 id="text-block-details-title">📋 屏蔽记录详情</h2>
         <button class="modal-close" id="modal-close-block-details">&times;</button>
       </div>
       <div class="modal-body modal-body-details">

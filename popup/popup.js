@@ -31,6 +31,318 @@ const REVIEW_PROMPT_KEY = 'reviewPromptState';
 const REVIEW_MIN_SUCCESSFUL_BLOCKS = 12;
 const REVIEW_MIN_COMPLETED_SESSIONS = 3;
 const REVIEW_SNOOZE_MS = 7 * 24 * 60 * 60 * 1000;
+const UI_LANG_KEY = 'uiLanguage';
+const MODERATION_ACTION_KEY = 'moderationAction';
+
+let uiLanguage = 'zh';
+let moderationAction = 'block';
+
+const I18N = {
+  zh: {
+    justNow: '刚刚',
+    minutesAgo: '{n} 分钟前',
+    hoursAgo: '{n} 小时前',
+    daysAgo: '{n} 天前',
+    unknownPage: '未知页面',
+    deepScanPage: '深度扫描 {target}',
+    homePage: 'X 首页',
+    searchPage: '搜索：{q}',
+    userReplies: '@{user} 的回复',
+    userMedia: '@{user} 的媒体',
+    userLikes: '@{user} 的喜欢',
+    switchToX: '请先切到 X 页面',
+    analyzing: '分析中…',
+    startAiLocal: '开始 AI + 本地分析',
+    startLocal: '开始本地规则扫描',
+    queuePaused: '已暂停',
+    queueRunning: '运行中',
+    queueIdle: '空闲',
+    queueTaskLine: '任务队列：{status}（待处理 {pending}）',
+    queueDetailCurrent: '当前：{current} ｜ 成功 {done} ｜ 失败 {failed}',
+    queueDetailSummary: '成功 {done} ｜ 失败 {failed} ｜ 总计 {total}',
+    queueNoTasks: '暂无任务记录',
+    queueSessionStats: '扫描 <strong>{scanned}</strong> 条 · 入队 <strong>{enqueued}</strong> 个',
+    aiToggleTitleConfigured: '开启后会在本地规则之后调用已配置的 AI 模型',
+    aiToggleTitleNotConfigured: '开启后仍需在设置页配置模型；未配置时会自动使用本地规则',
+    errNotXTab: '当前标签页不是 X 站点页面，请切到 x.com / twitter.com 页面后重试。',
+    scanningStartAi: '正在启动 AI + 本地分析…',
+    scanningStartLocal: '正在启动本地规则扫描…',
+    scanningCollecting: '正在采集推文…',
+    scanningAnalyzing: '正在分析…',
+    errStartAnalysis: '⚠️ 启动分析失败：{msg}',
+    errAnalysisFailed: '⚠️ 分析失败：{msg}',
+    unknownError: '未知错误',
+    emptyWithCount: '扫描了 {n} 条推文，未发现疑似垃圾账号。',
+    emptyNoTweets: '当前页面未找到推文，请确认页面已加载内容后重试。',
+    autoQueuedSummary: '采集了 {n} 条回复，检测出 {c} 个账号',
+    resultSummary: '发现 <strong>{total}</strong> 个疑似账号，已勾选 {selected} 个高置信项',
+    tweetsScanned: '（扫描了 {n} 条推文）',
+    aiOnlyCount: '（{n} 条）',
+    confirmAddBlock: '加入屏蔽任务列表',
+    confirmAddBlockCount: '加入屏蔽任务列表（{n}）',
+    confirmAddHide: '加入隐藏任务列表',
+    confirmAddHideCount: '加入隐藏任务列表（{n}）',
+    noNewQueueItems: '没有新增屏蔽任务：这些账号可能已经在待处理队列中。',
+    errQueueAddFailed: '⚠️ 加入队列失败：{msg}',
+    deepHandleRequired: '请输入博主 Handle（如 @xxx）',
+    errDeepScanFailed: '⚠️ 深度扫描失败：{msg}',
+    errDeepScanStartFailed: '⚠️ 启动深度扫描失败：{msg}',
+    deepCollecting: '正在采集…',
+    deepCompletedEmpty: '深度扫描完成，未找到疑似账号。',
+    blockSummary: '共 {pages} 个页面：成功屏蔽 {done} 个，失败 {failed} 个',
+    noRecords: '暂无任务记录',
+    noItems: '暂无记录',
+    blockStats: '扫 {scanned} 条 · 屏蔽 {enqueued}',
+    titleOptions: '设置',
+    textNotX: '当前不是 x.com/twitter.com 页面。你仍可在下方查看屏蔽进度并追加屏蔽账号。',
+    textIdleHint: '点击下方按钮扫描当前页面已显示的推文。本地规则无需 API；开启 AI 分析后，会在本地规则之外调用你配置的模型辅助判断。',
+    btnOpenOptions: '打开设置页',
+    btnRetry: '重新分析',
+    btnSelectAll: '全选',
+    btnSelectHigh: '只选 90%+',
+    btnDeselectAll: '全不选',
+    aiOnlySummaryHtml: '🤖 AI 发现但本地规则未识别 <span id="ai-only-count"></span>（可用于丰富本地规则）',
+    btnCancel: '取消',
+    btnDeepScan: '深度扫描某博主',
+    textAutoBlock: '自动执行模式（无需确认，完成后自动关闭）',
+    textAiAnalysis: 'AI 分析（可选；关闭时只使用本地规则，不需要配置 API）',
+    btnReviewCloseTitle: '关闭',
+    reviewTitle: '觉得顺手的话，给个好评吧',
+    reviewCopy: '如果它确实帮你省下了清理垃圾账号的时间，一个评分会很有帮助。',
+    btnReviewRate: '去评价',
+    btnReviewLater: '稍后再说',
+    queueIdleText: '任务队列：空闲',
+    btnQueuePause: '暂停',
+    btnQueueResume: '继续',
+    btnQueueRetry: '重试失败',
+    btnQueueDetails: '任务详情',
+    labelActionMode: '执行动作',
+    actionBlock: '屏蔽',
+    actionHide: '隐藏',
+    deepTitle: '🔍 深度扫描某博主的回复',
+    deepLabelHandle: '博主 Handle（例：@xxx）',
+    deepLabelPosts: '最多采集帖子数',
+    deepLabelReplies: '每条帖子最多回复数',
+    deepLabelTotal: '总回复数上限',
+    deepDesc: '深度扫描会逐条打开帖子采集回复，速度较慢。建议先用默认配置试试。',
+    btnStartScan: '开始扫描',
+    deepStatsPosts: '已采集帖子：',
+    deepStatsReplies: '已采集回复：',
+    deepStatsCandidates: '找到疑似账号：',
+    blockInProgress: '正在执行…',
+    doneMessage: '任务完成。',
+    doneOk: '完成',
+    blockDetailsTitle: '📋 任务记录详情',
+    filterAll: '全部',
+    filterDone: '✓ 成功',
+    filterFailed: '✗ 失败'
+  },
+  en: {
+    justNow: 'just now',
+    minutesAgo: '{n}m ago',
+    hoursAgo: '{n}h ago',
+    daysAgo: '{n}d ago',
+    unknownPage: 'Unknown page',
+    deepScanPage: 'Deep scan {target}',
+    homePage: 'X Home',
+    searchPage: 'Search: {q}',
+    userReplies: '@{user} replies',
+    userMedia: '@{user} media',
+    userLikes: '@{user} likes',
+    switchToX: 'Switch to an X tab first',
+    analyzing: 'Analyzing...',
+    startAiLocal: 'Start AI + local scan',
+    startLocal: 'Start local-rule scan',
+    queuePaused: 'Paused',
+    queueRunning: 'Running',
+    queueIdle: 'Idle',
+    queueTaskLine: 'Task queue: {status} (pending {pending})',
+    queueDetailCurrent: 'Current: {current} | Success {done} | Failed {failed}',
+    queueDetailSummary: 'Success {done} | Failed {failed} | Total {total}',
+    queueNoTasks: 'No task history yet',
+    queueSessionStats: 'Scanned <strong>{scanned}</strong> posts · Enqueued <strong>{enqueued}</strong> accounts',
+    aiToggleTitleConfigured: 'When enabled, it calls your configured AI model after local rules',
+    aiToggleTitleNotConfigured: 'Enable it after configuring a model in options; otherwise local rules are used',
+    errNotXTab: 'Current tab is not an X page. Switch to x.com / twitter.com and try again.',
+    scanningStartAi: 'Starting AI + local scan...',
+    scanningStartLocal: 'Starting local-rule scan...',
+    scanningCollecting: 'Collecting posts...',
+    scanningAnalyzing: 'Analyzing...',
+    errStartAnalysis: '⚠️ Failed to start analysis: {msg}',
+    errAnalysisFailed: '⚠️ Analysis failed: {msg}',
+    unknownError: 'Unknown error',
+    emptyWithCount: 'Scanned {n} posts and found no suspicious accounts.',
+    emptyNoTweets: 'No posts found on this page. Please wait for content to load and try again.',
+    autoQueuedSummary: 'Collected {n} replies and detected {c} accounts',
+    resultSummary: 'Found <strong>{total}</strong> suspicious accounts, {selected} high-confidence selected',
+    tweetsScanned: '(Scanned {n} posts)',
+    aiOnlyCount: '({n} items)',
+    confirmAddBlock: 'Add to block queue',
+    confirmAddBlockCount: 'Add to block queue ({n})',
+    confirmAddHide: 'Add to hide queue',
+    confirmAddHideCount: 'Add to hide queue ({n})',
+    noNewQueueItems: 'No new block tasks were added: these accounts may already be queued.',
+    errQueueAddFailed: '⚠️ Failed to add queue items: {msg}',
+    deepHandleRequired: 'Please enter a handle (for example: @xxx)',
+    errDeepScanFailed: '⚠️ Deep scan failed: {msg}',
+    errDeepScanStartFailed: '⚠️ Failed to start deep scan: {msg}',
+    deepCollecting: 'Collecting...',
+    deepCompletedEmpty: 'Deep scan completed with no suspicious accounts.',
+    blockSummary: '{pages} pages total: blocked {done} success, {failed} failed',
+    noRecords: 'No task history yet',
+    noItems: 'No entries',
+    blockStats: 'Scanned {scanned} · Queued {enqueued}',
+    titleOptions: 'Settings',
+    textNotX: 'This is not an x.com/twitter.com page. You can still view queue progress and continue blocking below.',
+    textIdleHint: 'Click the button below to scan visible posts on this page. Local rules do not require any API; with AI enabled, your configured model is used in addition to local rules.',
+    btnOpenOptions: 'Open Settings',
+    btnRetry: 'Analyze Again',
+    btnSelectAll: 'Select all',
+    btnSelectHigh: 'Select 90%+',
+    btnDeselectAll: 'Deselect all',
+    aiOnlySummaryHtml: '🤖 AI-only detections not matched by local rules <span id="ai-only-count"></span>',
+    btnCancel: 'Cancel',
+    btnDeepScan: 'Deep Scan a Creator',
+    textAutoBlock: 'Auto run mode (no confirmation, auto-off after completion)',
+    textAiAnalysis: 'AI analysis (optional; when off, only local rules are used and no API setup is needed)',
+    btnReviewCloseTitle: 'Close',
+    reviewTitle: 'If this helps, leave a review',
+    reviewCopy: 'If Block Bot saved you cleanup time, a quick rating would really help.',
+    btnReviewRate: 'Rate now',
+    btnReviewLater: 'Maybe later',
+    queueIdleText: 'Task queue: Idle',
+    btnQueuePause: 'Pause',
+    btnQueueResume: 'Resume',
+    btnQueueRetry: 'Retry failed',
+    btnQueueDetails: 'Task details',
+    labelActionMode: 'Action Mode',
+    actionBlock: 'Block',
+    actionHide: 'Hide',
+    deepTitle: '🔍 Deep Scan Replies for a Creator',
+    deepLabelHandle: 'Creator handle (example: @xxx)',
+    deepLabelPosts: 'Max posts to scan',
+    deepLabelReplies: 'Max replies per post',
+    deepLabelTotal: 'Total reply cap',
+    deepDesc: 'Deep scan opens posts one by one to collect replies, so it can be slower. Start with defaults first.',
+    btnStartScan: 'Start scan',
+    deepStatsPosts: 'Posts collected:',
+    deepStatsReplies: 'Replies collected:',
+    deepStatsCandidates: 'Suspicious accounts found:',
+    blockInProgress: 'Running task...',
+    doneMessage: 'Task completed.',
+    doneOk: 'Done',
+    blockDetailsTitle: '📋 Task Details',
+    filterAll: 'All',
+    filterDone: '✓ Success',
+    filterFailed: '✗ Failed'
+  }
+};
+
+function detectUiLanguage() {
+  return /^zh\b/i.test(navigator.language || '') ? 'zh' : 'en';
+}
+
+function t(key, vars = {}) {
+  const table = I18N[uiLanguage] || I18N.zh;
+  const fallback = I18N.zh;
+  const raw = table[key] || fallback[key] || key;
+  return raw.replace(/\{(\w+)\}/g, (_, k) => String(vars[k] ?? ''));
+}
+
+function setText(id, text) {
+  const el = document.getElementById(id);
+  if (el) el.textContent = text;
+}
+
+function normalizeModerationAction(action) {
+  return action === 'hide' ? 'hide' : 'block';
+}
+
+function applyStaticTranslations() {
+  document.documentElement.lang = uiLanguage === 'zh' ? 'zh-CN' : 'en';
+  setText('text-not-x-msg', t('textNotX'));
+  setText('text-idle-hint', t('textIdleHint'));
+  setText('btn-open-options-from-notice', t('btnOpenOptions'));
+  setText('btn-retry', t('btnRetry'));
+  setText('btn-select-all', t('btnSelectAll'));
+  setText('btn-select-high', t('btnSelectHigh'));
+  setText('btn-deselect-all', t('btnDeselectAll'));
+  setText('btn-cancel-results', t('btnCancel'));
+  setText('btn-deep-scan', t('btnDeepScan'));
+  setText('text-auto-block', t('textAutoBlock'));
+  setText('text-ai-analysis', t('textAiAnalysis'));
+  setText('text-review-title', t('reviewTitle'));
+  setText('text-review-copy', t('reviewCopy'));
+  setText('btn-review-rate', t('btnReviewRate'));
+  setText('btn-review-later', t('btnReviewLater'));
+  setText('queue-msg', t('queueIdleText'));
+  setText('btn-queue-pause', t('btnQueuePause'));
+  setText('btn-queue-resume', t('btnQueueResume'));
+  setText('btn-queue-retry-failed', t('btnQueueRetry'));
+  setText('btn-queue-details', t('btnQueueDetails'));
+  setText('label-action-mode', t('labelActionMode'));
+  setText('option-action-block', t('actionBlock'));
+  setText('option-action-hide', t('actionHide'));
+  setText('text-deep-scan-title', t('deepTitle'));
+  setText('label-deep-scan-handle', t('deepLabelHandle'));
+  setText('label-deep-scan-posts', t('deepLabelPosts'));
+  setText('label-deep-scan-replies', t('deepLabelReplies'));
+  setText('label-deep-scan-total', t('deepLabelTotal'));
+  setText('text-deep-scan-desc', t('deepDesc'));
+  setText('btn-modal-cancel', t('btnCancel'));
+  setText('btn-modal-start-deep-scan', t('btnStartScan'));
+  setText('text-deep-scan-posts', t('deepStatsPosts'));
+  setText('text-deep-scan-replies', t('deepStatsReplies'));
+  setText('text-deep-scan-candidates', t('deepStatsCandidates'));
+  setText('btn-deep-scan-pause', t('btnQueuePause'));
+  setText('btn-deep-scan-cancel', t('btnCancel'));
+  setText('block-msg', t('blockInProgress'));
+  setText('done-msg', t('doneMessage'));
+  setText('btn-done-ok', t('doneOk'));
+  setText('text-block-details-title', t('blockDetailsTitle'));
+  setText('filter-all', t('filterAll'));
+  setText('filter-done', t('filterDone'));
+  setText('filter-failed', t('filterFailed'));
+  const aiOnlySummary = document.getElementById('ai-only-summary');
+  if (aiOnlySummary) aiOnlySummary.innerHTML = t('aiOnlySummaryHtml');
+
+  const optionsBtn = document.getElementById('btn-options');
+  if (optionsBtn) optionsBtn.title = t('titleOptions');
+  const reviewCloseBtn = document.getElementById('btn-review-dismiss');
+  if (reviewCloseBtn) reviewCloseBtn.title = t('btnReviewCloseTitle');
+
+  const actionSelect = document.getElementById('select-action-mode');
+  if (actionSelect) actionSelect.value = moderationAction;
+
+  updateAnalyzeButtonState();
+  updateConfirmBtn();
+  if (lastAllSessions.length) renderBlockDetails();
+}
+
+async function loadUiLanguage() {
+  try {
+    const data = await chrome.storage.local.get([UI_LANG_KEY]);
+    const stored = data?.[UI_LANG_KEY];
+    uiLanguage = stored === 'zh' || stored === 'en' ? stored : detectUiLanguage();
+  } catch (_) {
+    uiLanguage = detectUiLanguage();
+  }
+}
+
+async function setupLanguageSelector() {
+  const sel = document.getElementById('lang-select');
+  if (!sel) return;
+  sel.value = uiLanguage;
+  sel.addEventListener('change', async () => {
+    const next = sel.value === 'en' ? 'en' : 'zh';
+    uiLanguage = next;
+    try {
+      await chrome.storage.local.set({ [UI_LANG_KEY]: next });
+    } catch (_) {}
+    applyStaticTranslations();
+    await refreshQueueStatus();
+  });
+}
 
 function isSupportedXUrl(url) {
   try {
@@ -62,35 +374,35 @@ function escapeHtml(str) {
 function formatRelativeTime(ts) {
   const diff = Date.now() - ts;
   const s = Math.floor(diff / 1000);
-  if (s < 60) return '刚刚';
+  if (s < 60) return t('justNow');
   const m = Math.floor(s / 60);
-  if (m < 60) return `${m} 分钟前`;
+  if (m < 60) return t('minutesAgo', { n: m });
   const h = Math.floor(m / 60);
-  if (h < 24) return `${h} 小时前`;
+  if (h < 24) return t('hoursAgo', { n: h });
   const d = Math.floor(h / 24);
-  return `${d} 天前`;
+  return t('daysAgo', { n: d });
 }
 
 function formatPageLabel(url) {
-  if (!url) return '未知页面';
+  if (!url) return t('unknownPage');
   if (url.startsWith('deep:')) {
-    return `深度扫描 ${url.slice(5)}`;
+    return t('deepScanPage', { target: url.slice(5) });
   }
   try {
     const u = new URL(url);
     const path = u.pathname.replace(/\/$/, '');
-    if (!path || path === '/home') return 'X 首页';
+    if (!path || path === '/home') return t('homePage');
     if (path === '/search') {
       const q = u.searchParams.get('q') || '';
-      return `搜索：${q.slice(0, 25)}`;
+      return t('searchPage', { q: q.slice(0, 25) });
     }
     const m = path.match(/^\/([^\/]+)(\/(.+))?$/);
     if (m) {
       const user = m[1];
       const sub = m[3];
-      if (sub === 'with_replies') return `@${user} 的回复`;
-      if (sub === 'media') return `@${user} 的媒体`;
-      if (sub === 'likes') return `@${user} 的喜欢`;
+      if (sub === 'with_replies') return t('userReplies', { user });
+      if (sub === 'media') return t('userMedia', { user });
+      if (sub === 'likes') return t('userLikes', { user });
       if (!sub) return `@${user}`;
       return `@${user}/${sub}`;
     }
@@ -120,12 +432,12 @@ function updateAnalyzeButtonState() {
 
   inlineAnalyzeBtn.disabled = !isXTab || analysisRunning;
   if (!isXTab) {
-    inlineAnalyzeBtn.textContent = '请先切到 X 页面';
+    inlineAnalyzeBtn.textContent = t('switchToX');
     return;
   }
   inlineAnalyzeBtn.textContent = analysisRunning
-    ? '分析中…'
-    : (aiAnalysisEnabled && providerConfigured ? '开始 AI + 本地分析' : '开始本地规则扫描');
+    ? t('analyzing')
+    : (aiAnalysisEnabled && providerConfigured ? t('startAiLocal') : t('startLocal'));
 }
 
 function bindClick(id, handler) {
@@ -253,11 +565,11 @@ function renderQueueStatus(s) {
   const pending = (s.queue || []).filter(i => i.status === 'pending').length;
   const failed = Number(s.failed || 0);
   const done = Number(s.done || 0);
-  const runningText = s.paused ? '已暂停' : (s.running ? '运行中' : '空闲');
-  msgEl.textContent = `屏蔽任务：${runningText}（待处理 ${pending}）`;
+  const runningText = s.paused ? t('queuePaused') : (s.running ? t('queueRunning') : t('queueIdle'));
+  msgEl.textContent = t('queueTaskLine', { status: runningText, pending });
   const baseDetail = s.current
-    ? `当前：${s.current} ｜ 成功 ${s.done} ｜ 失败 ${s.failed}`
-    : `成功 ${s.done} ｜ 失败 ${s.failed} ｜ 总计 ${s.total}`;
+    ? t('queueDetailCurrent', { current: s.current, done: s.done, failed: s.failed })
+    : t('queueDetailSummary', { done: s.done, failed: s.failed, total: s.total });
   detailEl.textContent = s.errorMsg ? `${baseDetail} ｜ ${s.errorMsg}` : baseDetail;
 
   const pct = s.total > 0 ? ((s.done + s.failed) / s.total) * 100 : 0;
@@ -288,7 +600,7 @@ function renderQueueStatus(s) {
   if (pages.length === 0) {
     const li = document.createElement('li');
     li.className = 'task-session-empty';
-    li.textContent = '暂无任务记录';
+    li.textContent = t('queueNoTasks');
     logEl.appendChild(li);
   } else {
     pages.forEach(page => {
@@ -301,7 +613,7 @@ function renderQueueStatus(s) {
         `<span class="task-session-time">${escapeHtml(formatRelativeTime(page.timestamp))}</span>`+
         `</div>`+
         `<div class="task-session-row">`+
-        `<span class="task-session-nums">扫描 <strong>${page.scannedCount}</strong> 条 · 屏蔽 <strong>${page.enqueuedCount}</strong> 个</span>`+
+        `<span class="task-session-nums">${t('queueSessionStats', { scanned: page.scannedCount, enqueued: page.enqueuedCount })}</span>`+
         `<span class="ts-done">✓${page.done}</span>`+
         `<span class="ts-failed">✗${page.failed}</span>`+
         (pending > 0 ? `<span class="ts-pending">⏳${pending}</span>` : '') +
@@ -330,6 +642,10 @@ function startQueuePolling() {
 }
 
 async function init() {
+  await loadUiLanguage();
+  await setupLanguageSelector();
+  applyStaticTranslations();
+
   const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
   const tab = tabs[0];
 
@@ -343,9 +659,10 @@ async function init() {
 
   // ── Load auto-block setting ────────────────────────────────────────────────
   try {
-    const stored = await chrome.storage.local.get(['autoBlock', 'aiAnalysisEnabled']);
+    const stored = await chrome.storage.local.get(['autoBlock', 'aiAnalysisEnabled', MODERATION_ACTION_KEY]);
     autoBlockEnabled = Boolean(stored.autoBlock);
     aiAnalysisEnabled = Boolean(stored.aiAnalysisEnabled);
+    moderationAction = normalizeModerationAction(stored[MODERATION_ACTION_KEY]);
   } catch (_) {}
   const toggleEl = document.getElementById('toggle-auto-block');
   if (toggleEl) {
@@ -371,6 +688,18 @@ async function init() {
 
   startQueuePolling();
 
+
+  const actionModeEl = document.getElementById('select-action-mode');
+  if (actionModeEl) {
+    actionModeEl.value = moderationAction;
+    actionModeEl.addEventListener('change', async () => {
+      moderationAction = normalizeModerationAction(actionModeEl.value);
+      updateConfirmBtn();
+      try {
+        await chrome.storage.local.set({ [MODERATION_ACTION_KEY]: moderationAction });
+      } catch (_) {}
+    });
+  }
   // ── Deep Scan recovery ────────────────────────────────────────────────────
   // Deep Scan runs in the background service worker and is independent of
   // whichever tab the user is currently viewing.  Check its state FIRST,
@@ -426,8 +755,8 @@ async function renderConfigHintIfNeeded() {
     if (aiToggleEl) {
       aiToggleEl.checked = aiAnalysisEnabled;
       aiToggleEl.title = providerConfigured
-        ? '开启后会在本地规则之后调用已配置的 AI 模型'
-        : '开启后仍需在设置页配置模型；未配置时会自动使用本地规则';
+        ? t('aiToggleTitleConfigured')
+        : t('aiToggleTitleNotConfigured');
     }
     updateAnalyzeButtonState();
   } catch (_) {}
@@ -435,7 +764,7 @@ async function renderConfigHintIfNeeded() {
 
 async function startAnalysis() {
   if (!isXTab || !currentTabId) {
-    showNotice('当前标签页不是 X 站点页面，请切到 x.com / twitter.com 页面后重试。', true);
+    showNotice(t('errNotXTab'), true);
     return;
   }
 
@@ -445,7 +774,7 @@ async function startAnalysis() {
   analysisRunning = true;
   updateAnalyzeButtonState();
   showView('scanning');
-  setScanMsg(aiAnalysisEnabled && providerConfigured ? '正在启动 AI + 本地分析…' : '正在启动本地规则扫描…');
+  setScanMsg(aiAnalysisEnabled && providerConfigured ? t('scanningStartAi') : t('scanningStartLocal'));
 
   try {
     const resp = await chrome.runtime.sendMessage({
@@ -469,12 +798,12 @@ async function startAnalysis() {
     if (state) {
       applyAnalysisState(state);
     } else {
-      setScanMsg('正在采集推文…');
+      setScanMsg(t('scanningCollecting'));
     }
   } catch (e) {
     analysisRunning = false;
     updateAnalyzeButtonState();
-    showNotice('⚠️ 启动分析失败：' + e.message, true);
+    showNotice(t('errStartAnalysis', { msg: e.message }), true);
     return;
   }
 
@@ -521,7 +850,7 @@ async function applyAnalysisState(state) {
 
   if (state.status === 'running') {
     showView('scanning');
-    setScanMsg(state.progressText || '正在分析…');
+    setScanMsg(state.progressText || t('scanningAnalyzing'));
     return;
   }
 
@@ -535,7 +864,7 @@ async function applyAnalysisState(state) {
       updateAnalyzeButtonState();
       showView(isXTab ? 'idle' : 'notX');
     } else {
-      showNotice('⚠️ 分析失败：' + (state.error || '未知错误'), true);
+      showNotice(t('errAnalysisFailed', { msg: state.error || t('unknownError') }), true);
     }
     return;
   }
@@ -544,8 +873,8 @@ async function applyAnalysisState(state) {
     const n = Number(state.scannedTweetCount || 0);
     showNotice(
       n > 0
-        ? `扫描了 ${n} 条推文，未发现疑似垃圾账号。`
-        : '当前页面未找到推文，请确认页面已加载内容后重试。',
+        ? t('emptyWithCount', { n })
+        : t('emptyNoTweets'),
       false
     );
     return;
@@ -563,7 +892,7 @@ async function applyAnalysisState(state) {
       : [];
     aiOnlyDetections = Array.isArray(state.aiOnlyDetections) ? state.aiOnlyDetections : [];
     if (candidates.length === 0) {
-      showNotice(`扫描了 ${scannedTweetCount} 条推文，未发现疑似垃圾账号。`, false);
+      showNotice(t('emptyWithCount', { n: scannedTweetCount }), false);
       return;
     }
     currentScanSource = state.sourceUrl || currentTabUrl;
@@ -571,7 +900,7 @@ async function applyAnalysisState(state) {
       if (state.autoQueued) {
         const n = Number(state.scannedTweetCount || 0);
         const c = Array.isArray(state.candidates) ? state.candidates.length : 0;
-        setScanMsg(`采集了 ${n} 条回复，检测出 ${c} 个账号`);
+        setScanMsg(t('autoQueuedSummary', { n, c }));
         showView('scanning');
         await new Promise(r => setTimeout(r, 2000));
         await clearAnalysisState();
@@ -616,9 +945,9 @@ function startAnalysisPolling() {
 function renderResults() {
   const selectedCount = candidates.filter(c => c.selected).length;
   document.getElementById('result-count').innerHTML =
-    `发现 <strong>${candidates.length}</strong> 个疑似账号，已勾选 ${selectedCount} 个高置信项`;
+    t('resultSummary', { total: candidates.length, selected: selectedCount });
   document.getElementById('tweet-count').textContent =
-    `（扫描了 ${scannedTweetCount} 条推文）`;
+    t('tweetsScanned', { n: scannedTweetCount });
 
   const list = document.getElementById('candidate-list');
   list.innerHTML = '';
@@ -655,7 +984,7 @@ function renderResults() {
   if (aiOnlySection && aiOnlyList) {
     if (Array.isArray(aiOnlyDetections) && aiOnlyDetections.length > 0) {
       aiOnlySection.classList.remove('hidden');
-      if (aiOnlyCountEl) aiOnlyCountEl.textContent = `（${aiOnlyDetections.length} 条）`;
+      if (aiOnlyCountEl) aiOnlyCountEl.textContent = t('aiOnlyCount', { n: aiOnlyDetections.length });
       aiOnlyList.innerHTML = '';
       aiOnlyDetections.forEach(item => {
         const li = document.createElement('li');
@@ -686,24 +1015,36 @@ function renderResults() {
 function updateConfirmBtn() {
   const n = candidates.filter(c => c.selected).length;
   const btn = document.getElementById('btn-confirm-block');
-  btn.textContent = n > 0 ? `加入屏蔽任务列表（${n}）` : '加入屏蔽任务列表';
+  const isHide = moderationAction === 'hide';
+  if (n > 0) {
+    btn.textContent = isHide ? t('confirmAddHideCount', { n }) : t('confirmAddBlockCount', { n });
+  } else {
+    btn.textContent = isHide ? t('confirmAddHide') : t('confirmAddBlock');
+  }
   btn.disabled = n === 0;
 }
 
 async function addSelectedToQueue() {
-  const selected = candidates.filter(c => c.selected);
+  const selected = candidates
+    .filter(c => c.selected)
+    .map(c => ({ ...c, actionType: moderationAction }));
   if (selected.length === 0) return;
 
   try {
     const resp = await chrome.runtime.sendMessage({
       action: 'enqueueGlobalBlockAccounts',
       accounts: selected,
-      meta: { scannedCount: scannedTweetCount, candidateCount: candidates.length, sourceUrl: currentScanSource }
+      meta: {
+        scannedCount: scannedTweetCount,
+        candidateCount: candidates.length,
+        sourceUrl: currentScanSource,
+        actionType: moderationAction
+      }
     });
     if (!resp?.ok) throw new Error(resp?.error || '加入队列失败');
     if (Number(resp.added || 0) === 0) {
       await refreshQueueStatus();
-      showNotice('没有新增屏蔽任务：这些账号可能已经在待处理队列中。', true);
+      showNotice(t('noNewQueueItems'), true);
       return;
     }
     await refreshQueueStatus();
@@ -716,7 +1057,7 @@ async function addSelectedToQueue() {
     candidates = [];
     showView(isXTab ? 'idle' : 'notX');
   } catch (e) {
-    showNotice('⚠️ 加入队列失败：' + e.message, true);
+    showNotice(t('errQueueAddFailed', { msg: e.message }), true);
   }
 }
 
@@ -744,7 +1085,7 @@ async function startDeepScan() {
   const maxTotalReplies = parseInt(document.getElementById('deep-scan-total').value, 10) || 1000;
 
   if (!handle) {
-    alert('请输入博主 Handle（如 @xxx）');
+    alert(t('deepHandleRequired'));
     return;
   }
 
@@ -765,13 +1106,13 @@ async function startDeepScan() {
     });
 
     if (!resp?.ok) {
-      showNotice('⚠️ 深度扫描失败：' + (resp?.error || '未知错误'), true);
+      showNotice(t('errDeepScanFailed', { msg: resp?.error || t('unknownError') }), true);
       return;
     }
 
     startDeepScanPolling();
   } catch (e) {
-    showNotice('⚠️ 启动深度扫描失败：' + e.message, true);
+    showNotice(t('errDeepScanStartFailed', { msg: e.message }), true);
   }
 }
 
@@ -790,6 +1131,9 @@ async function renderDeepScanStatus(status) {
   const cancelBtn = document.getElementById('btn-deep-scan-cancel');
 
   msgEl.textContent = status.currentStep || '正在采集…';
+  if (!status.currentStep) {
+    msgEl.textContent = t('deepCollecting');
+  }
   postsEl.textContent = status.postsCount || 0;
   repliesEl.textContent = status.repliesCount || 0;
   candidatesEl.textContent = status.candidatesCount || 0;
@@ -799,7 +1143,7 @@ async function renderDeepScanStatus(status) {
 
   if (!status.running && status.error) {
     stopDeepScanPolling();
-    showNotice('⚠️ 深度扫描失败：' + status.error, true);
+    showNotice(t('errDeepScanFailed', { msg: status.error }), true);
     chrome.runtime.sendMessage({ action: 'clearDeepScanCompleted' }).catch(() => {});
     showView(isXTab ? 'idle' : 'notX');
     return;
@@ -819,7 +1163,7 @@ async function renderDeepScanStatus(status) {
       }
       renderResults();
     } else {
-      showNotice(`深度扫描完成，未找到疑似账号。`, false);
+      showNotice(t('deepCompletedEmpty'), false);
     }
     // Clear the completed flag in the background so re-opening the popup
     // does not replay the same results again.
@@ -911,8 +1255,8 @@ function renderBlockDetails() {
 
   document.getElementById('block-details-summary').textContent =
     allPages.length > 0
-      ? `共 ${allPages.length} 个页面：成功屏蔽 ${totalDone} 个，失败 ${totalFailed} 个`
-      : '暂无任务记录';
+      ? t('blockSummary', { pages: allPages.length, done: totalDone, failed: totalFailed })
+      : t('noRecords');
 
   document.querySelectorAll('.filter-btn').forEach(btn => {
     btn.classList.toggle('filter-btn-active', btn.dataset.filter === blockDetailsFilter);
@@ -930,7 +1274,7 @@ function renderBlockDetails() {
   if (filtered.length === 0) {
     const li = document.createElement('li');
     li.className = 'block-details-empty';
-    li.textContent = '暂无记录';
+    li.textContent = t('noItems');
     list.appendChild(li);
     return;
   }
@@ -942,7 +1286,7 @@ function renderBlockDetails() {
     li.innerHTML =
       `<span class="bds-page">${escapeHtml(formatPageLabel(page.sourceUrl))}</span>` +
       `<span class="bds-time">${escapeHtml(formatRelativeTime(page.timestamp))}</span>` +
-      `<span class="bds-scan">扫 ${page.scannedCount} 条 · 屏蔽 ${page.enqueuedCount}</span>` +
+      `<span class="bds-scan">${t('blockStats', { scanned: page.scannedCount, enqueued: page.enqueuedCount })}</span>` +
       `<span class="bds-stats">` +
         `<span class="ts-done">✓${page.done}</span> ` +
         `<span class="ts-failed">✗${page.failed}</span>` +

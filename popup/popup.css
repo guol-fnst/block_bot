@@ -24,6 +24,27 @@ body {
   z-index: 10;
 }
 
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.lang-select {
+  border: 1px solid #d0d7de;
+  border-radius: 6px;
+  background: #ffffff;
+  color: #24292f;
+  height: 26px;
+  font-size: 12px;
+  padding: 0 6px;
+}
+
+.lang-select:focus {
+  outline: none;
+  border-color: #1d9bf0;
+}
+
 .logo {
   font-weight: 700;
   font-size: 14px;
@@ -480,13 +501,40 @@ body {
 
 /* ── Auto-block toggle row ───────────────────────────────────────────────────── */
 .auto-block-row,
-.analysis-mode-row {
+.analysis-mode-row,
+.action-mode-row {
   margin-bottom: 8px;
   padding: 6px 2px;
 }
 
 .analysis-mode-row {
   padding-top: 0;
+}
+
+.action-mode-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding-top: 0;
+}
+
+.field-label.inline {
+  margin-bottom: 0;
+}
+
+.action-select {
+  border: 1px solid #d0d7de;
+  border-radius: 8px;
+  background: #ffffff;
+  color: #24292f;
+  font-size: 12px;
+  padding: 6px 10px;
+}
+
+.action-select:focus {
+  outline: none;
+  border-color: #1d9bf0;
 }
 
 .toggle-label {

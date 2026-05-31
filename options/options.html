@@ -8,15 +8,21 @@
 </head>
 <body>
   <div class="container">
-    <h1>⚙ Block Bot 设置</h1>
+    <div class="page-head">
+      <h1 id="text-page-title">⚙ Block Bot 设置</h1>
+      <select id="lang-select" class="input select-input lang-select" aria-label="Language">
+        <option value="zh">中文</option>
+        <option value="en">EN</option>
+      </select>
+    </div>
 
     <section class="card">
-      <h2>模型与 API 配置</h2>
-      <p class="desc">
+      <h2 id="text-provider-title">模型与 API 配置</h2>
+      <p id="text-provider-desc" class="desc">
         支持 Gemini、Anthropic，以及主流 OpenAI 兼容接口；也可以填写自定义兼容端点。
       </p>
 
-      <label class="field-label" for="provider">提供商</label>
+      <label class="field-label" for="provider" id="label-provider">提供商</label>
       <select id="provider" class="input select-input">
         <option value="gemini">Gemini</option>
         <option value="openai">OpenAI</option>
@@ -114,12 +120,12 @@
     </section>
 
     <section class="card">
-      <h2>屏蔽策略</h2>
-      <p class="desc">
+      <h2 id="text-strategy-title">屏蔽策略</h2>
+      <p id="text-strategy-desc" class="desc">
         仅当模型判定概率达到该阈值时，账号才会出现在可屏蔽候选列表中。
       </p>
 
-      <label class="field-label" for="spam-threshold">垃圾/机器人判定阈值（%）</label>
+      <label class="field-label" for="spam-threshold" id="label-threshold">垃圾/机器人判定阈值（%）</label>
       <input
         type="number"
         id="spam-threshold"
@@ -129,23 +135,23 @@
         step="1"
         placeholder="80"
       />
-      <p class="desc small">例如设置为 90，则 89% 及以下不会进入屏蔽候选。</p>
-      <label class="field-label" for="obvious-bot-keywords">本地预过滤关键词</label>
+      <p class="desc small" id="text-threshold-desc">例如设置为 90，则 89% 及以下不会进入屏蔽候选。</p>
+      <label class="field-label" for="obvious-bot-keywords" id="label-keywords">本地预过滤关键词</label>
       <textarea
         id="obvious-bot-keywords"
         class="input keyword-input"
         placeholder="每行一个关键词，也可以用逗号分隔，例如：同城&#10;约炮&#10;onlyfans"
         spellcheck="false"
       ></textarea>
-      <p class="desc small">这些关键词会匹配账号昵称和 handle。命中后还会结合极短回复、随机 ID 等信号，在调用 AI 前先进入候选。</p>
+      <p class="desc small" id="text-keywords-desc">这些关键词会匹配账号昵称和 handle。命中后还会结合极短回复、随机 ID 等信号，在调用 AI 前先进入候选。</p>
 
       <button class="btn btn-primary" id="btn-save-threshold" type="button">保存阈值</button>
       <p id="threshold-msg" class="save-msg hidden"></p>
     </section>
 
     <section class="card">
-      <h2>性能调优</h2>
-      <p class="desc">
+      <h2 id="text-performance-title">性能调优</h2>
+      <p id="text-performance-desc" class="desc">
         可按 API 配额与网络情况调节分析速度。并发和批量越大越快，但更容易触发服务商限流。
       </p>
 
@@ -220,12 +226,12 @@
     </section>
 
     <section class="card">
-      <h2>检测提示词（可自定义）</h2>
-      <p class="desc">
+      <h2 id="text-prompt-title">检测提示词（可自定义）</h2>
+      <p id="text-prompt-desc" class="desc">
         这里填写的是“高置信度特征”规则。留空则使用内置默认规则。保存后下次分析立即生效，无需重新打包插件。
       </p>
 
-      <label class="field-label" for="custom-prompt">自定义规则</label>
+      <label class="field-label" for="custom-prompt" id="label-custom-prompt">自定义规则</label>
       <textarea
         id="custom-prompt"
         class="input textarea-input"
@@ -238,7 +244,7 @@
     </section>
 
     <section class="card">
-      <h2>关于</h2>
+      <h2 id="text-about-title">关于</h2>
       <p class="desc">
         Block Bot 是一个本地运行的 Chrome 扩展。它扫描你在 X.com 上当前页面已显示的
         推文，通过你配置的大模型检测垃圾账号和机器人号，经你手动确认后再执行屏蔽。
@@ -256,7 +262,7 @@
         上架材料请同时提供仓库中的 <code>README.md</code> 与 <code>PRIVACY_POLICY.md</code>。
         隐私政策需要放到公开可访问的 URL 后再填写到 Chrome Web Store。
       </p>
-      <p class="desc version">版本 0.3.2</p>
+      <p class="desc version" id="text-version">版本 0.3.2</p>
     </section>
   </div>
 
