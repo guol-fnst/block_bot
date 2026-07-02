@@ -201,6 +201,16 @@ h2 {
   line-height: 1.4;
 }
 
+.feature-state {
+  font-size: 12px;
+  color: #9a6700;
+  font-weight: 600;
+}
+
+.feature-state.active {
+  color: #1a7f37;
+}
+
 .feature-signature {
   font-family: 'Courier New', monospace;
   font-size: 13px;

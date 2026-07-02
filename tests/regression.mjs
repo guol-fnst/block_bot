@@ -331,7 +331,26 @@ section('auto-learned local feature signatures');
   assert('two learnable signatures extracted', signatures.length, 2);
 
   let learnedLibrary = upsertLearnedFeatureLibraryEntries([], [signatures[0]]);
+  let earlyHit = detectObviousBotReply({
+    handle: '@FriendlyMathEarly',
+    displayName: 'Friendly Early',
+    defaultProfileImage: true,
+    text: '\u2202\u2207\u2202 I prefer quiet coffee shops and bookstores.'
+  });
+  assertFalsy('single learned sample does not activate local match', earlyHit && earlyHit.isSpamOrBot);
+
   learnedLibrary = upsertLearnedFeatureLibraryEntries(learnedLibrary, [signatures[1]]);
+  setAutoLearnedFeatureLibrary(learnedLibrary);
+
+  earlyHit = detectObviousBotReply({
+    handle: '@FriendlyMathStillEarly',
+    displayName: 'Friendly Still Early',
+    defaultProfileImage: true,
+    text: '\u2202\u2207\u2202 I keep weekends slow and full of books.'
+  });
+  assertFalsy('two learned samples still stay below activation threshold', earlyHit && earlyHit.isSpamOrBot);
+
+  learnedLibrary = upsertLearnedFeatureLibraryEntries(learnedLibrary, [signatures[0]]);
   setAutoLearnedFeatureLibrary(learnedLibrary);
 
   const learnedHit = detectObviousBotReply({
@@ -343,6 +362,17 @@ section('auto-learned local feature signatures');
   assertTruthy('third similar sample is caught after auto-learning', learnedHit && learnedHit.isSpamOrBot);
   assertTruthy('learned hit reason mentions auto-learned signature', learnedHit?.reason.includes('auto-learned'));
   setAutoLearnedFeatureLibrary([]);
+}
+
+section('auto-learned signatures reject weak-only patterns');
+{
+  const weakOnly = buildLearnedFeatureSignature(collectLocalFeatureSignals({
+    handle: '@plain987654',
+    displayName: 'Plain User',
+    defaultProfileImage: true,
+    text: '42'
+  }));
+  assert('weak context-only pattern is not learnable', weakOnly, null);
 }
 
 section('addJokeTemplateClusterResults — math-prefix bot cluster');

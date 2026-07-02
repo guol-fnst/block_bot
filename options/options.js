@@ -29,6 +29,7 @@ const refreshLibraryBtn = document.getElementById('btn-refresh-library');
 const clearLibraryBtn = document.getElementById('btn-clear-library');
 
 const UI_LANG_KEY = 'uiLanguage';
+const AUTO_LEARN_ACTIVATION_COUNT = 3;
 let uiLanguage = 'zh';
 let currentLearnedFeatures = [];
 
@@ -55,7 +56,7 @@ const I18N = {
     labelCustomPrompt: '自定义规则',
     btnSavePrompt: '保存提示词',
     sectionAboutTitle: '关于',
-    versionText: '版本 0.3.2',
+    versionText: '版本 0.3.4',
     errGeminiKeyRequired: '请输入 Gemini API Key',
     errGeminiPrefix: 'Gemini Key 通常以 "AIza" 开头',
     okGeminiSaved: 'Gemini 配置已保存 ✓',
@@ -97,7 +98,7 @@ const I18N = {
     labelCustomPrompt: 'Custom Rules',
     btnSavePrompt: 'Save Prompt',
     sectionAboutTitle: 'About',
-    versionText: 'Version 0.3.2',
+    versionText: 'Version 0.3.4',
     errGeminiKeyRequired: 'Please enter a Gemini API key',
     errGeminiPrefix: 'Gemini keys usually start with "AIza"',
     okGeminiSaved: 'Gemini configuration saved ✓',
@@ -130,6 +131,8 @@ Object.assign(I18N.zh, {
   libraryStatusCount: '已收录 {n} 条自动学习特征',
   libraryStatusCountActive: '已收录 {n} 条自动学习特征，其中 {a} 条已达到本地规则生效门槛',
   librarySeenCount: '出现 {n} 次',
+  libraryPending: '观察中',
+  libraryActive: '已生效',
   libraryLastSeen: '最近学习 {time}',
   libraryCreatedAt: '首次学习 {time}',
   libraryDelete: '删除',
@@ -151,6 +154,8 @@ Object.assign(I18N.en, {
   libraryStatusCount: '{n} learned signatures stored',
   libraryStatusCountActive: '{n} learned signatures stored, {a} already active in local rules',
   librarySeenCount: 'Seen {n} times',
+  libraryPending: 'Observing',
+  libraryActive: 'Active',
   libraryLastSeen: 'Last learned {time}',
   libraryCreatedAt: 'First learned {time}',
   libraryDelete: 'Delete',
@@ -719,7 +724,7 @@ function renderLearnedFeatureLibrary(features = []) {
 
   const rows = Array.isArray(features) ? features.slice() : [];
   currentLearnedFeatures = rows;
-  const activeCount = rows.filter(entry => Number(entry?.seenCount || 0) >= 2).length;
+  const activeCount = rows.filter(entry => Number(entry?.seenCount || 0) >= Math.max(1, Number(entry?.activationCount || AUTO_LEARN_ACTIVATION_COUNT))).length;
   learnedFeaturesStatus.dataset.state = 'ready';
   learnedFeaturesStatus.textContent = rows.length > 0
     ? t(activeCount > 0 ? 'libraryStatusCountActive' : 'libraryStatusCount', { n: rows.length, a: activeCount })
@@ -739,6 +744,7 @@ function renderLearnedFeatureLibrary(features = []) {
   rows.forEach(entry => {
     const item = document.createElement('div');
     item.className = 'feature-item';
+    const isActive = Number(entry?.seenCount || 0) >= Math.max(1, Number(entry?.activationCount || AUTO_LEARN_ACTIVATION_COUNT));
 
     const top = document.createElement('div');
     top.className = 'feature-top';
@@ -747,9 +753,14 @@ function renderLearnedFeatureLibrary(features = []) {
     meta.className = 'feature-meta';
 
     const badge = document.createElement('span');
-    badge.className = 'feature-badge' + (Number(entry.seenCount || 0) >= 2 ? ' active' : '');
+    badge.className = 'feature-badge' + (isActive ? ' active' : '');
     badge.textContent = t('librarySeenCount', { n: Number(entry.seenCount || 0) });
     meta.appendChild(badge);
+
+    const state = document.createElement('span');
+    state.className = 'feature-state' + (isActive ? ' active' : '');
+    state.textContent = t(isActive ? 'libraryActive' : 'libraryPending');
+    meta.appendChild(state);
 
     const time = document.createElement('span');
     time.className = 'feature-time';

@@ -19,6 +19,7 @@ const API_RETRY_BASE_DELAY_MS = 800;
 const API_RETRY_MAX_DELAY_MS = 8000;
 const API_FETCH_TIMEOUT_MS = 30000;
 const AUTO_LEARNED_FEATURES_KEY = 'autoLearnedFeatures';
+const AUTO_LEARN_ACTIVATION_COUNT = 3;
 
 const PERSIST_BLOCK_QUEUE_KEY = 'blockQueueState';
 const PERSIST_TASK_SESSIONS_KEY = 'taskSessions';
@@ -74,6 +75,7 @@ const deepScanState = {
   candidates: [],
   candidatesCount: 0,
   completed: false,
+  learnedFeaturesUpdate: null,
   currentStep: '待启动',
   scannedPostUrls: new Set(),
   workerTabId: null,
@@ -275,7 +277,8 @@ function normalizeLearnedFeatureEntry(entry) {
     features: uniqueFeatures,
     seenCount: Math.max(0, Number(entry?.seenCount || 0)),
     lastSeenAt: Number(entry?.lastSeenAt || 0),
-    createdAt: Number(entry?.createdAt || entry?.lastSeenAt || Date.now())
+    createdAt: Number(entry?.createdAt || entry?.lastSeenAt || Date.now()),
+    activationCount: Math.max(1, Number(entry?.activationCount || AUTO_LEARN_ACTIVATION_COUNT))
   };
 }
 
@@ -1862,18 +1865,29 @@ function buildLearnedFeatureSignature(signals) {
   const features = [...strongAnchors, ...mediumAnchors, ...context];
   if (features.length === 0) return null;
 
+  // Never auto-learn signatures that are made only of weak context signals.
+  // This avoids teaching the local rules patterns like "default avatar + random-looking handle"
+  // without any content-level anchor.
+  if (strongAnchors.length === 0) {
+    if (mediumAnchors.length === 0) return null;
+    if (mediumAnchors.length === 1 && context.length < 2) return null;
+  }
+
   const score =
     strongAnchors.length * 3 +
     mediumAnchors.length * 2 +
     context.length;
   if (score < 4) return null;
 
-  return Array.from(new Set(features)).sort();
+  return {
+    features: Array.from(new Set(features)).sort(),
+    activationCount: AUTO_LEARN_ACTIVATION_COUNT
+  };
 }
 
 function findLearnedFeatureMatch(signals, featureLibrary = autoLearnedFeatureLibrary) {
   const activeEntries = normalizeLearnedFeatureLibrary(featureLibrary)
-    .filter(entry => entry.seenCount >= 2);
+    .filter(entry => entry.seenCount >= Math.max(1, Number(entry.activationCount || AUTO_LEARN_ACTIVATION_COUNT)));
   if (activeEntries.length === 0) return null;
 
   for (const entry of activeEntries) {
@@ -1893,19 +1907,24 @@ function upsertLearnedFeatureLibraryEntries(library, signatures) {
   const next = normalizeLearnedFeatureLibrary(library);
   const byId = new Map(next.map(entry => [entry.id, entry]));
 
-  for (const features of signatures) {
+  for (const signature of signatures) {
+    const features = Array.isArray(signature?.features) ? signature.features : [];
+    const activationCount = Math.max(1, Number(signature?.activationCount || AUTO_LEARN_ACTIVATION_COUNT));
+    if (features.length === 0) continue;
     const id = features.join('|');
     const existing = byId.get(id);
     if (existing) {
       existing.seenCount += 1;
       existing.lastSeenAt = now;
+      existing.activationCount = activationCount;
     } else {
       const created = normalizeLearnedFeatureEntry({
         id,
         features,
         seenCount: 1,
         createdAt: now,
-        lastSeenAt: now
+        lastSeenAt: now,
+        activationCount
       });
       next.push(created);
       byId.set(id, created);
@@ -2071,7 +2090,7 @@ function detectObviousBotReply(tweet, customKeywords = []) {
     const learnedReasons = learnedEntry.features.map(featureReasonLabel);
     return buildLocalRuleHit(
       tweet,
-      Math.min(0.97, 0.91 + Math.min(0.04, Math.max(0, learnedEntry.seenCount - 2) * 0.02)),
+      Math.min(0.97, 0.91 + Math.min(0.04, Math.max(0, learnedEntry.seenCount - learnedEntry.activationCount) * 0.02)),
       [`matched auto-learned local feature signature`, ...learnedReasons]
     );
   }
@@ -2411,6 +2430,7 @@ async function startAnalysisForTab(tabId, overrides = {}) {
 
   try {
     let analysisSourceUrl = '';
+    let learnedFeaturesUpdate = null;
     // 获取 tab URL，初始化缓存
     const tab = await chrome.tabs.get(tabId).catch(() => null);
     if (tab?.url) {
@@ -2543,8 +2563,11 @@ async function startAnalysisForTab(tabId, overrides = {}) {
           evidenceTweet: String(r.evidenceTweet || '')
         }));
 
-      await learnFromAiOnlyDetections(modelResults, prefilter.modelTweets, cfg)
-        .catch(e => console.warn('[AutoLearn] Failed to update local feature library:', e));
+      learnedFeaturesUpdate = await learnFromAiOnlyDetections(modelResults, prefilter.modelTweets, cfg)
+        .catch(e => {
+          console.warn('[AutoLearn] Failed to update local feature library:', e);
+          return null;
+        });
     }
 
     if (!aiAvailable) {
@@ -2605,7 +2628,8 @@ async function startAnalysisForTab(tabId, overrides = {}) {
       progressText: '',
       sourceUrl: analysisSourceUrl,
       autoQueued,
-      aiOnlyDetections: aiOnlyDetections.length > 0 ? aiOnlyDetections : []
+      aiOnlyDetections: aiOnlyDetections.length > 0 ? aiOnlyDetections : [],
+      learnedFeaturesUpdate
     });
   } catch (e) {
     const prev = (await getAnalysisState(tabId)) || { scannedTweetCount: 0 };
@@ -2635,6 +2659,7 @@ function getDeepScanStatusSnapshot() {
     candidatesCount: deepScanState.candidatesCount,
     currentStep: deepScanState.currentStep,
     completed: deepScanState.completed,
+    learnedFeaturesUpdate: deepScanState.learnedFeaturesUpdate,
     candidates: deepScanState.candidates,
     error: deepScanState.error
   };
@@ -2674,8 +2699,8 @@ async function learnFromAiOnlyDetections(modelResults, modelTweets, cfg) {
   }
 
   const nextLibrary = upsertLearnedFeatureLibraryEntries(autoLearnedFeatureLibrary, signatures);
-  const prevActive = autoLearnedFeatureLibrary.filter(entry => entry.seenCount >= 2).length;
-  const nextActive = nextLibrary.filter(entry => entry.seenCount >= 2).length;
+  const prevActive = autoLearnedFeatureLibrary.filter(entry => entry.seenCount >= Math.max(1, Number(entry.activationCount || AUTO_LEARN_ACTIVATION_COUNT))).length;
+  const nextActive = nextLibrary.filter(entry => entry.seenCount >= Math.max(1, Number(entry.activationCount || AUTO_LEARN_ACTIVATION_COUNT))).length;
   setAutoLearnedFeatureLibrary(nextLibrary);
   await storageSet({ [AUTO_LEARNED_FEATURES_KEY]: nextLibrary });
   return {
@@ -2696,6 +2721,7 @@ async function startDeepScan(config) {
   deepScanState.candidates = [];
   deepScanState.candidatesCount = 0;
   deepScanState.completed = false;
+  deepScanState.learnedFeaturesUpdate = null;
   deepScanState.currentStep = '正在初始化…';
   deepScanState.scannedPostUrls = new Set();
   deepScanState.error = '';
@@ -2717,6 +2743,7 @@ async function performDeepScan(cfg) {
   const maxPosts = deepScanState.config.maxPosts || 20;
   const maxRepliesPerPost = deepScanState.config.maxRepliesPerPost || 100;
   const maxTotalReplies = deepScanState.config.maxTotalReplies || 1000;
+  let learnedFeaturesUpdate = null;
 
   console.log(`[DeepScan] 开始扫描 @${handle}, 配置: maxPosts=${maxPosts}, maxRepliesPerPost=${maxRepliesPerPost}, maxTotalReplies=${maxTotalReplies}`);
 
@@ -2819,8 +2846,11 @@ async function performDeepScan(cfg) {
       console.log(`[DeepScan] 模型分析 - 返回结果数: ${modelResults.length}`);
       results.push(...modelResults);
       detectAutoReplyBots(prefilter.modelTweets, modelResults);
-      await learnFromAiOnlyDetections(modelResults, prefilter.modelTweets, cfg)
-        .catch(e => console.warn('[AutoLearn] DeepScan update failed:', e));
+      learnedFeaturesUpdate = await learnFromAiOnlyDetections(modelResults, prefilter.modelTweets, cfg)
+        .catch(e => {
+          console.warn('[AutoLearn] DeepScan update failed:', e);
+          return null;
+        });
       console.log(`[DeepScan] 自动回复检测后 - 总结果数: ${results.length}`);
     } else if (prefilter.modelTweets.length > 0) {
       deepScanState.currentStep = `AI 未启用，已用本地规则分析 ${filteredReplies.length} 条回复`;
@@ -2829,6 +2859,7 @@ async function performDeepScan(cfg) {
 
     deepScanState.candidates = normalizeCandidates(results, cfg.spamConfidenceThreshold);
     deepScanState.candidatesCount = deepScanState.candidates.length;
+    deepScanState.learnedFeaturesUpdate = learnedFeaturesUpdate;
     console.log(`[DeepScan] 标准化候选人 (门槛: ${cfg.spamConfidenceThreshold}) - 最终: ${deepScanState.candidatesCount}`);
     deepScanState.candidates.forEach(c => {
       console.log(`  - ${c.handle} (${c.displayName}) 置信度: ${c.confidence.toFixed(2)}`);

@@ -13,6 +13,7 @@ let currentTabId = null;
 let isXTab = false;
 let candidates = [];
 let aiOnlyDetections = [];
+let learnedFeaturesUpdate = null;
 let scannedTweetCount = 0;
 let analysisPollTimer = null;
 let queuePollTimer = null;
@@ -237,6 +238,14 @@ const I18N = {
     filterFailed: '✗ Failed'
   }
 };
+
+Object.assign(I18N.zh, {
+  learnedFeatureNotice: '✨ 已自动补充本地特征库：新增 {learned} 条特征，激活 {activated} 条本地规则。'
+});
+
+Object.assign(I18N.en, {
+  learnedFeatureNotice: '✨ Local feature library updated automatically: {learned} new signatures, {activated} newly activated local rules.'
+});
 
 function detectUiLanguage() {
   return /^zh\b/i.test(navigator.language || '') ? 'zh' : 'en';
@@ -769,6 +778,7 @@ async function startAnalysis() {
   }
 
   currentScanSource = currentTabUrl;
+  learnedFeaturesUpdate = null;
 
   stopAnalysisPolling();
   analysisRunning = true;
@@ -827,6 +837,20 @@ async function retryAnalysis() {
 
 function setScanMsg(msg) {
   document.getElementById('scanning-msg').textContent = msg;
+}
+
+function renderLearnedFeatureNotice() {
+  const el = document.getElementById('learned-feature-notice');
+  if (!el) return;
+  const learned = Number(learnedFeaturesUpdate?.learned || 0);
+  const activated = Number(learnedFeaturesUpdate?.activated || 0);
+  if (learned <= 0 && activated <= 0) {
+    el.textContent = '';
+    el.classList.add('hidden');
+    return;
+  }
+  el.textContent = t('learnedFeatureNotice', { learned, activated });
+  el.classList.remove('hidden');
 }
 
 function showNotice(msg, isError, showOptionsButton = false) {
@@ -891,6 +915,7 @@ async function applyAnalysisState(state) {
         }))
       : [];
     aiOnlyDetections = Array.isArray(state.aiOnlyDetections) ? state.aiOnlyDetections : [];
+    learnedFeaturesUpdate = state.learnedFeaturesUpdate || null;
     if (candidates.length === 0) {
       showNotice(t('emptyWithCount', { n: scannedTweetCount }), false);
       return;
@@ -944,6 +969,7 @@ function startAnalysisPolling() {
 
 function renderResults() {
   const selectedCount = candidates.filter(c => c.selected).length;
+  renderLearnedFeatureNotice();
   document.getElementById('result-count').innerHTML =
     t('resultSummary', { total: candidates.length, selected: selectedCount });
   document.getElementById('tweet-count').textContent =
@@ -1091,6 +1117,7 @@ async function startDeepScan() {
 
   closeDeepScanModal();
   showView('deepScanProgress');
+  learnedFeaturesUpdate = null;
   deepScanState = { postsCount: 0, repliesCount: 0, candidatesCount: 0 };
 
   try {
@@ -1154,6 +1181,7 @@ async function renderDeepScanStatus(status) {
     if (status.candidates && status.candidates.length > 0) {
       scannedTweetCount = status.repliesCount;
       candidates = (status.candidates || []).map(c => ({ ...c, selected: true }));
+      learnedFeaturesUpdate = status.learnedFeaturesUpdate || null;
       currentScanSource = `deep:@${(status.handle || '').replace(/^@/, '')}`;
       if (autoBlockEnabled) {
         await addSelectedToQueue();

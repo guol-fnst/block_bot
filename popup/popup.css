@@ -157,6 +157,17 @@ body {
 }
 .muted { color: #71767b; font-size: 12px; }
 
+.learned-feature-notice {
+  margin-bottom: 10px;
+  padding: 9px 11px;
+  border-radius: 8px;
+  border: 1px solid #aceebb;
+  background: #dafbe1;
+  color: #1a7f37;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
 .result-actions-top {
   display: flex;
   gap: 8px;
