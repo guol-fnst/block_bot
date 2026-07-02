@@ -77,6 +77,10 @@ const {
   buildPrompt,
   normalizeCandidates,
   hasObviousBotKeyword,
+  collectLocalFeatureSignals,
+  buildLearnedFeatureSignature,
+  upsertLearnedFeatureLibraryEntries,
+  setAutoLearnedFeatureLibrary,
 } = ctx;
 
 // ── Test harness ─────────────────────────────────────────────────────────────
@@ -309,6 +313,36 @@ const MATH_PREFIX_BOTS = [
 ];
 for (const t of MATH_PREFIX_BOTS) {
   assertDetected(t.handle, t, 0.90);
+}
+section('auto-learned local feature signatures');
+{
+  setAutoLearnedFeatureLibrary([]);
+  const aiOnlySamples = [
+    { handle: '@FriendlyMathOne', displayName: 'Friendly One', defaultProfileImage: true, text: '\u2202\u2207\u2202 I like reading books and watching movies.' },
+    { handle: '@FriendlyMathTwo', displayName: 'Friendly Two', defaultProfileImage: true, text: '\u2202\u2207\u2202 I enjoy calm weekends with coffee and books.' },
+  ];
+
+  assertNotDetected('sample 1 is initially missed by built-in local rules', aiOnlySamples[0]);
+  assertNotDetected('sample 2 is initially missed by built-in local rules', aiOnlySamples[1]);
+
+  const signatures = aiOnlySamples
+    .map(tweet => buildLearnedFeatureSignature(collectLocalFeatureSignals(tweet)))
+    .filter(Boolean);
+  assert('two learnable signatures extracted', signatures.length, 2);
+
+  let learnedLibrary = upsertLearnedFeatureLibraryEntries([], [signatures[0]]);
+  learnedLibrary = upsertLearnedFeatureLibraryEntries(learnedLibrary, [signatures[1]]);
+  setAutoLearnedFeatureLibrary(learnedLibrary);
+
+  const learnedHit = detectObviousBotReply({
+    handle: '@FriendlyMathThree',
+    displayName: 'Friendly Three',
+    defaultProfileImage: true,
+    text: '\u2202\u2207\u2202 I keep my weekends quiet and full of books.'
+  });
+  assertTruthy('third similar sample is caught after auto-learning', learnedHit && learnedHit.isSpamOrBot);
+  assertTruthy('learned hit reason mentions auto-learned signature', learnedHit?.reason.includes('auto-learned'));
+  setAutoLearnedFeatureLibrary([]);
 }
 
 section('addJokeTemplateClusterResults — math-prefix bot cluster');

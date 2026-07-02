@@ -22,9 +22,15 @@ const scrapeMaxRoundsInput = document.getElementById('scrape-max-rounds');
 const scrapeMaxTweetsInput = document.getElementById('scrape-max-tweets');
 const scrapeStagnantRoundsInput = document.getElementById('scrape-stagnant-rounds');
 const langSelect = document.getElementById('lang-select');
+const learnedFeaturesList = document.getElementById('learned-features-list');
+const learnedFeaturesEmpty = document.getElementById('learned-features-empty');
+const learnedFeaturesStatus = document.getElementById('text-library-status');
+const refreshLibraryBtn = document.getElementById('btn-refresh-library');
+const clearLibraryBtn = document.getElementById('btn-clear-library');
 
 const UI_LANG_KEY = 'uiLanguage';
 let uiLanguage = 'zh';
+let currentLearnedFeatures = [];
 
 const I18N = {
   zh: {
@@ -113,6 +119,48 @@ const I18N = {
   }
 };
 
+Object.assign(I18N.zh, {
+  keywordsNote: '这里是可手动编辑的本地关键词。自动学习的特征库会在下方单独管理，不会混到这个文本框里。',
+  sectionLibraryTitle: '自动学习特征库',
+  sectionLibraryDesc: 'AI 找到但本地规则未命中的样本，如果发现了可复用的稳定特征组合，就会累计到这里。你可以查看、删除单条或清空整个特征库。',
+  btnRefreshLibrary: '刷新',
+  btnClearLibrary: '清空特征库',
+  libraryLoading: '正在加载特征库...',
+  libraryEmpty: '暂时还没有自动学习的特征。',
+  libraryStatusCount: '已收录 {n} 条自动学习特征',
+  libraryStatusCountActive: '已收录 {n} 条自动学习特征，其中 {a} 条已达到本地规则生效门槛',
+  librarySeenCount: '出现 {n} 次',
+  libraryLastSeen: '最近学习 {time}',
+  libraryCreatedAt: '首次学习 {time}',
+  libraryDelete: '删除',
+  libraryDeleteDone: '已删除自动学习特征',
+  libraryClearDone: '已清空自动学习特征库',
+  libraryLoadFailed: '加载特征库失败：{msg}',
+  libraryUpdateFailed: '更新特征库失败：{msg}',
+  libraryClearConfirm: '确定要清空所有自动学习特征吗？'
+});
+
+Object.assign(I18N.en, {
+  keywordsNote: 'This text box is for manually maintained local keywords. Auto-learned feature signatures are managed separately below and are not mixed into this field.',
+  sectionLibraryTitle: 'Auto-Learned Feature Library',
+  sectionLibraryDesc: 'When AI catches accounts that local rules missed, reusable signal combinations are accumulated here after repeated matches. You can review them, delete individual entries, or clear the whole learned library.',
+  btnRefreshLibrary: 'Refresh',
+  btnClearLibrary: 'Clear Library',
+  libraryLoading: 'Loading learned features...',
+  libraryEmpty: 'No auto-learned features yet.',
+  libraryStatusCount: '{n} learned signatures stored',
+  libraryStatusCountActive: '{n} learned signatures stored, {a} already active in local rules',
+  librarySeenCount: 'Seen {n} times',
+  libraryLastSeen: 'Last learned {time}',
+  libraryCreatedAt: 'First learned {time}',
+  libraryDelete: 'Delete',
+  libraryDeleteDone: 'Learned feature removed successfully',
+  libraryClearDone: 'Learned feature library cleared',
+  libraryLoadFailed: 'Failed to load learned features: {msg}',
+  libraryUpdateFailed: 'Failed to update learned features: {msg}',
+  libraryClearConfirm: 'Clear all auto-learned feature signatures?'
+});
+
 function t(key, vars = {}) {
   const table = I18N[uiLanguage] || I18N.zh;
   const fallback = I18N.zh;
@@ -127,6 +175,16 @@ function setText(id, text) {
 
 function detectUiLanguage() {
   return /^zh\b/i.test(navigator.language || '') ? 'zh' : 'en';
+}
+
+function ensureKeywordNote() {
+  if (document.getElementById('text-keywords-note')) return;
+  const desc = document.getElementById('text-keywords-desc');
+  if (!desc || !desc.parentNode) return;
+  const note = document.createElement('p');
+  note.id = 'text-keywords-note';
+  note.className = 'desc small';
+  desc.insertAdjacentElement('afterend', note);
 }
 
 async function loadUiLanguage() {
@@ -154,7 +212,18 @@ function applyStaticTranslations() {
   setText('text-threshold-desc', t('thresholdDesc'));
   setText('label-keywords', t('labelKeywords'));
   setText('text-keywords-desc', t('keywordsDesc'));
+  setText('text-keywords-note', t('keywordsNote'));
   setText('btn-save-threshold', t('btnSaveThreshold'));
+  setText('text-library-title', t('sectionLibraryTitle'));
+  setText('text-library-desc', t('sectionLibraryDesc'));
+  setText('btn-refresh-library', t('btnRefreshLibrary'));
+  setText('btn-clear-library', t('btnClearLibrary'));
+  if (learnedFeaturesStatus?.dataset.state === 'loading') {
+    learnedFeaturesStatus.textContent = t('libraryLoading');
+  }
+  if (learnedFeaturesEmpty && learnedFeaturesEmpty.classList.contains('hidden') === false) {
+    learnedFeaturesEmpty.textContent = t('libraryEmpty');
+  }
   setText('text-performance-title', t('sectionPerformanceTitle'));
   setText('text-performance-desc', t('sectionPerformanceDesc'));
   setText('btn-save-performance', t('btnSavePerformance'));
@@ -164,6 +233,9 @@ function applyStaticTranslations() {
   setText('btn-save-prompt', t('btnSavePrompt'));
   setText('text-about-title', t('sectionAboutTitle'));
   setText('text-version', t('versionText'));
+  if (currentLearnedFeatures.length > 0) {
+    renderLearnedFeatureLibrary(currentLearnedFeatures);
+  }
 }
 
 // Keep in sync with background.js defaultDetectionRules()
@@ -451,6 +523,7 @@ function loadSettings() {
 }
 
 async function initPage() {
+  ensureKeywordNote();
   await loadUiLanguage();
   if (langSelect) {
     langSelect.value = uiLanguage;
@@ -461,10 +534,12 @@ async function initPage() {
       } catch (_) {}
       applyStaticTranslations();
       applyPresetIfNeeded(providerSel.value);
+      renderLearnedFeatureLibrary(currentLearnedFeatures);
     });
   }
   applyStaticTranslations();
   loadSettings();
+  refreshLearnedFeatureLibrary();
 }
 
 initPage().catch(() => {
@@ -485,6 +560,18 @@ toggleGeminiBtn.addEventListener('click', () => {
 toggleOpenaiBtn.addEventListener('click', () => {
   openaiKeyInput.type = openaiKeyInput.type === 'password' ? 'text' : 'password';
 });
+
+if (refreshLibraryBtn) {
+  refreshLibraryBtn.addEventListener('click', () => {
+    refreshLearnedFeatureLibrary();
+  });
+}
+
+if (clearLibraryBtn) {
+  clearLibraryBtn.addEventListener('click', () => {
+    clearLearnedFeatureLibrary();
+  });
+}
 
 function storageSetAsync(data) {
   return new Promise(resolve => chrome.storage.local.set(data, resolve));
@@ -609,6 +696,132 @@ function renderProviderFields(provider) {
 
   geminiFields.classList.add('hidden');
   openaiFields.classList.remove('hidden');
+}
+
+function formatTimestamp(ts) {
+  const value = Number(ts || 0);
+  if (!Number.isFinite(value) || value <= 0) return '-';
+  try {
+    return new Date(value).toLocaleString(uiLanguage === 'zh' ? 'zh-CN' : 'en-US');
+  } catch (_) {
+    return new Date(value).toISOString();
+  }
+}
+
+function showLibraryMsg(text, ok) {
+  const el = document.getElementById('library-msg');
+  el.textContent = text;
+  el.className = 'save-msg ' + (ok ? 'ok' : 'err');
+}
+
+function renderLearnedFeatureLibrary(features = []) {
+  if (!learnedFeaturesList || !learnedFeaturesEmpty || !learnedFeaturesStatus) return;
+
+  const rows = Array.isArray(features) ? features.slice() : [];
+  currentLearnedFeatures = rows;
+  const activeCount = rows.filter(entry => Number(entry?.seenCount || 0) >= 2).length;
+  learnedFeaturesStatus.dataset.state = 'ready';
+  learnedFeaturesStatus.textContent = rows.length > 0
+    ? t(activeCount > 0 ? 'libraryStatusCountActive' : 'libraryStatusCount', { n: rows.length, a: activeCount })
+    : t('libraryEmpty');
+
+  learnedFeaturesList.innerHTML = '';
+  if (rows.length === 0) {
+    learnedFeaturesList.classList.add('hidden');
+    learnedFeaturesEmpty.classList.remove('hidden');
+    learnedFeaturesEmpty.textContent = t('libraryEmpty');
+    return;
+  }
+
+  learnedFeaturesEmpty.classList.add('hidden');
+  learnedFeaturesList.classList.remove('hidden');
+
+  rows.forEach(entry => {
+    const item = document.createElement('div');
+    item.className = 'feature-item';
+
+    const top = document.createElement('div');
+    top.className = 'feature-top';
+
+    const meta = document.createElement('div');
+    meta.className = 'feature-meta';
+
+    const badge = document.createElement('span');
+    badge.className = 'feature-badge' + (Number(entry.seenCount || 0) >= 2 ? ' active' : '');
+    badge.textContent = t('librarySeenCount', { n: Number(entry.seenCount || 0) });
+    meta.appendChild(badge);
+
+    const time = document.createElement('span');
+    time.className = 'feature-time';
+    time.textContent = `${t('libraryLastSeen', { time: formatTimestamp(entry.lastSeenAt) })} · ${t('libraryCreatedAt', { time: formatTimestamp(entry.createdAt) })}`;
+    meta.appendChild(time);
+
+    const removeBtn = document.createElement('button');
+    removeBtn.type = 'button';
+    removeBtn.className = 'btn btn-secondary feature-delete';
+    removeBtn.textContent = t('libraryDelete');
+    removeBtn.addEventListener('click', () => removeLearnedFeature(entry.id));
+
+    top.appendChild(meta);
+    top.appendChild(removeBtn);
+
+    const featureText = document.createElement('div');
+    featureText.className = 'feature-signature';
+    featureText.textContent = Array.isArray(entry.features) ? entry.features.join(' + ') : '';
+
+    item.appendChild(top);
+    item.appendChild(featureText);
+    learnedFeaturesList.appendChild(item);
+  });
+}
+
+async function refreshLearnedFeatureLibrary(showMessage = false) {
+  if (!learnedFeaturesStatus) return;
+  learnedFeaturesStatus.dataset.state = 'loading';
+  learnedFeaturesStatus.textContent = t('libraryLoading');
+  try {
+    const resp = await chrome.runtime.sendMessage({ action: 'getAutoLearnedFeatures' });
+    if (!resp?.ok) {
+      throw new Error(resp?.error || t('unknownError'));
+    }
+    renderLearnedFeatureLibrary(resp.features || []);
+    if (showMessage) {
+      showLibraryMsg(t('btnRefreshLibrary'), true);
+    }
+  } catch (e) {
+    learnedFeaturesStatus.dataset.state = 'error';
+    learnedFeaturesStatus.textContent = t('libraryLoadFailed', { msg: e.message });
+    if (learnedFeaturesList) learnedFeaturesList.classList.add('hidden');
+    if (learnedFeaturesEmpty) learnedFeaturesEmpty.classList.remove('hidden');
+    showLibraryMsg(t('libraryLoadFailed', { msg: e.message }), false);
+  }
+}
+
+async function removeLearnedFeature(id) {
+  try {
+    const resp = await chrome.runtime.sendMessage({ action: 'removeAutoLearnedFeature', id });
+    if (!resp?.ok) {
+      throw new Error(resp?.error || t('unknownError'));
+    }
+    renderLearnedFeatureLibrary(resp.features || []);
+    showLibraryMsg(t('libraryDeleteDone'), true);
+  } catch (e) {
+    showLibraryMsg(t('libraryUpdateFailed', { msg: e.message }), false);
+  }
+}
+
+async function clearLearnedFeatureLibrary() {
+  if (!window.confirm(t('libraryClearConfirm'))) return;
+  try {
+    const resp = await chrome.runtime.sendMessage({ action: 'clearAutoLearnedFeatures' });
+    if (!resp?.ok) {
+      throw new Error(resp?.error || t('unknownError'));
+    }
+    renderLearnedFeatureLibrary(resp.features || []);
+    showLibraryMsg(t('libraryClearDone'), true);
+  } catch (e) {
+    showLibraryMsg(t('libraryUpdateFailed', { msg: e.message }), false);
+  }
 }
 
 document.getElementById('btn-save-threshold').addEventListener('click', () => {

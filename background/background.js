@@ -18,6 +18,7 @@ const API_RETRY_MAX_ATTEMPTS = 4;
 const API_RETRY_BASE_DELAY_MS = 800;
 const API_RETRY_MAX_DELAY_MS = 8000;
 const API_FETCH_TIMEOUT_MS = 30000;
+const AUTO_LEARNED_FEATURES_KEY = 'autoLearnedFeatures';
 
 const PERSIST_BLOCK_QUEUE_KEY = 'blockQueueState';
 const PERSIST_TASK_SESSIONS_KEY = 'taskSessions';
@@ -37,6 +38,7 @@ const GEMINI_MODELS = [
 ];
 
 const runningTabs = new Set();
+let autoLearnedFeatureLibrary = [];
 
 // 当前页面分析缓存：tabId => { scannedUserHandles: Set, currentUrl: string }
 // 用于避免重复分析同一用户
@@ -263,6 +265,61 @@ function storageRemove(keys) {
   return new Promise(resolve => chrome.storage.local.remove(keys, resolve));
 }
 
+function normalizeLearnedFeatureEntry(entry) {
+  const features = Array.isArray(entry?.features)
+    ? entry.features.map(v => String(v || '').trim()).filter(Boolean)
+    : [];
+  const uniqueFeatures = Array.from(new Set(features)).sort();
+  return {
+    id: String(entry?.id || uniqueFeatures.join('|')).trim(),
+    features: uniqueFeatures,
+    seenCount: Math.max(0, Number(entry?.seenCount || 0)),
+    lastSeenAt: Number(entry?.lastSeenAt || 0),
+    createdAt: Number(entry?.createdAt || entry?.lastSeenAt || Date.now())
+  };
+}
+
+function normalizeLearnedFeatureLibrary(entries) {
+  if (!Array.isArray(entries)) return [];
+  return entries
+    .map(normalizeLearnedFeatureEntry)
+    .filter(entry => entry.id && entry.features.length > 0);
+}
+
+function setAutoLearnedFeatureLibrary(entries) {
+  autoLearnedFeatureLibrary = normalizeLearnedFeatureLibrary(entries);
+  return autoLearnedFeatureLibrary;
+}
+
+function getAutoLearnedFeatureLibrary() {
+  return autoLearnedFeatureLibrary.slice();
+}
+
+async function loadAutoLearnedFeatureLibraryFromStorage() {
+  const data = await storageGet([AUTO_LEARNED_FEATURES_KEY]);
+  setAutoLearnedFeatureLibrary(data[AUTO_LEARNED_FEATURES_KEY]);
+  return getAutoLearnedFeatureLibrary();
+}
+
+async function persistAutoLearnedFeatureLibrary(entries) {
+  const normalized = setAutoLearnedFeatureLibrary(entries);
+  await storageSet({ [AUTO_LEARNED_FEATURES_KEY]: normalized });
+  return getAutoLearnedFeatureLibrary();
+}
+
+async function removeAutoLearnedFeatureEntry(entryId) {
+  const targetId = String(entryId || '').trim();
+  if (!targetId) {
+    return getAutoLearnedFeatureLibrary();
+  }
+  const filtered = autoLearnedFeatureLibrary.filter(entry => entry.id !== targetId);
+  return persistAutoLearnedFeatureLibrary(filtered);
+}
+
+async function clearAutoLearnedFeatureLibrary() {
+  return persistAutoLearnedFeatureLibrary([]);
+}
+
 // ─── 状态持久化（防止 Service Worker 重启丢数据）─────────────────────────────
 
 /**
@@ -360,6 +417,8 @@ async function restorePersistedState() {
     }
     console.log(`[Persist] Restored deepScanState: handle=${deepScanState.handle} completed=${deepScanState.completed} error=${deepScanState.error}`);
   }
+
+  await loadAutoLearnedFeatureLibraryFromStorage().catch(() => {});
 }
 
 // Restore persisted state as soon as the service worker starts.
@@ -958,8 +1017,11 @@ async function getProviderConfig() {
     'scrapeScrollWaitMs',
     'scrapeMaxRounds',
     'scrapeMaxTweets',
-    'scrapeStagnantRounds'
+    'scrapeStagnantRounds',
+    AUTO_LEARNED_FEATURES_KEY
   ]);
+
+  setAutoLearnedFeatureLibrary(d[AUTO_LEARNED_FEATURES_KEY]);
 
   const provider = d.llmProvider || 'gemini';
   return {
@@ -979,7 +1041,8 @@ async function getProviderConfig() {
     scrapeScrollWaitMs: normalizeScrapeScrollWaitMs(d.scrapeScrollWaitMs),
     scrapeMaxRounds: normalizeScrapeMaxRounds(d.scrapeMaxRounds),
     scrapeMaxTweets: normalizeScrapeMaxTweets(d.scrapeMaxTweets),
-    scrapeStagnantRounds: normalizeScrapeStagnantRounds(d.scrapeStagnantRounds)
+    scrapeStagnantRounds: normalizeScrapeStagnantRounds(d.scrapeStagnantRounds),
+    autoLearnedFeatures: getAutoLearnedFeatureLibrary()
   };
 }
 
@@ -1710,6 +1773,151 @@ function getEnglishJokeTemplateFamily(text) {
   return '';
 }
 
+function collectLocalFeatureSignals(tweet, customKeywords = []) {
+  const text = String(tweet?.text || '').trim();
+  const displayName = String(tweet?.displayName || '');
+  const handle = String(tweet?.handle || '');
+
+  return {
+    text,
+    displayName,
+    handle,
+    adultName: hasObviousBotKeyword(displayName, customKeywords) || hasObviousBotKeyword(handle, customKeywords),
+    cloudDrivePromo: hasCloudDrivePromoSignal(text, customKeywords),
+    randomHandle: looksLikeRandomHandle(handle),
+    tinyToken: isTinyTokenReply(text),
+    emojiOnly: isEmojiOnlyOrEmojiNumberReply(text),
+    lowInfoMixed: isLowInfoMixedEmojiReply(text),
+    singleLetterEmojiLure: isSingleLetterEmojiLureReply(text),
+    suspiciousPromoText: hasSuspiciousPromoText(text),
+    adultLureShortCopy: hasAdultLureShortCopy(text),
+    urlLike: hasUrlLikeSignal(text),
+    lowEntropy: hasLowTextEntropy(handle) || hasLowTextEntropy(displayName),
+    lowInfoText: stripEmojiLikeChars(text).length <= 8,
+    defaultAvatar: Boolean(tweet?.defaultProfileImage),
+    decorativeTemplate: hasDecorativeTemplateSignal(text),
+    jokeTemplateFamily: getEnglishJokeTemplateFamily(text),
+    emojiBurst: hasEmojiBurst(text, 5),
+    emojiDecoratedPhrase: hasEmojiDecoratedShortEnglishPhrase(text),
+    mathPrefix: hasMathSymbolPrefix(text),
+    obscureScriptDeco: hasObscureScriptDecoration(text),
+    decoratedCjkPattern: hasDecoratedCjkBotPattern(text)
+  };
+}
+
+function featureReasonLabel(feature) {
+  const labels = {
+    randomHandle: 'handle looks randomly generated',
+    tinyToken: 'reply text is only a tiny token/number',
+    emojiOnly: 'reply text is only emoji or emoji plus numbers',
+    lowInfoMixed: 'reply text is emoji mixed with very short alnum fragments',
+    singleLetterEmojiLure: 'reply text is a single letter wrapped by emoji decoration',
+    suspiciousPromoText: 'reply text contains spam/scam promo wording',
+    adultLureShortCopy: 'reply text matches short adult-lure bot copy',
+    urlLike: 'reply text contains external link or off-platform contact',
+    lowEntropy: 'profile text has low-entropy/generated-looking pattern',
+    defaultAvatar: 'account appears to use a default profile image',
+    decorativeTemplate: 'reply text looks like a decorative template bot message',
+    emojiBurst: 'reply text has unusually dense emoji decoration',
+    emojiDecoratedPhrase: 'reply text is a short english phrase wrapped in emoji decoration',
+    mathPrefix: 'text starts with math/unicode-operator symbol prefix (bot decoration pattern)',
+    obscureScriptDeco: 'text wraps English phrase in obscure Unicode script characters (bot decoration)',
+    decoratedCjkPattern: 'text wraps a short CJK phrase in decorative symbols/superscript glyphs (bot decoration)',
+    cloudDrivePromo: 'reply text contains cloud-drive promo link keywords',
+    adultName: 'display name or handle contains adult/spam lure keywords'
+  };
+
+  if (feature.startsWith('joke:')) {
+    return `reply text matches repetitive english joke template (${feature.slice(5)})`;
+  }
+  return labels[feature] || feature;
+}
+
+function buildLearnedFeatureSignature(signals) {
+  const strongAnchors = [];
+  const mediumAnchors = [];
+  const context = [];
+
+  if (signals.cloudDrivePromo) strongAnchors.push('cloudDrivePromo');
+  if (signals.adultLureShortCopy) strongAnchors.push('adultLureShortCopy');
+  if (signals.mathPrefix) strongAnchors.push('mathPrefix');
+  if (signals.obscureScriptDeco) strongAnchors.push('obscureScriptDeco');
+  if (signals.decoratedCjkPattern) strongAnchors.push('decoratedCjkPattern');
+  if (signals.emojiDecoratedPhrase) strongAnchors.push('emojiDecoratedPhrase');
+  if (signals.decorativeTemplate) strongAnchors.push('decorativeTemplate');
+  if (signals.jokeTemplateFamily) strongAnchors.push(`joke:${signals.jokeTemplateFamily}`);
+
+  if (signals.suspiciousPromoText) mediumAnchors.push('suspiciousPromoText');
+  if (signals.urlLike) mediumAnchors.push('urlLike');
+  if (signals.emojiOnly) mediumAnchors.push('emojiOnly');
+  if (signals.lowInfoMixed) mediumAnchors.push('lowInfoMixed');
+  if (signals.singleLetterEmojiLure) mediumAnchors.push('singleLetterEmojiLure');
+
+  if (signals.randomHandle) context.push('randomHandle');
+  if (signals.tinyToken) context.push('tinyToken');
+  if (signals.lowEntropy) context.push('lowEntropy');
+  if (signals.defaultAvatar) context.push('defaultAvatar');
+  if (signals.emojiBurst) context.push('emojiBurst');
+
+  const features = [...strongAnchors, ...mediumAnchors, ...context];
+  if (features.length === 0) return null;
+
+  const score =
+    strongAnchors.length * 3 +
+    mediumAnchors.length * 2 +
+    context.length;
+  if (score < 4) return null;
+
+  return Array.from(new Set(features)).sort();
+}
+
+function findLearnedFeatureMatch(signals, featureLibrary = autoLearnedFeatureLibrary) {
+  const activeEntries = normalizeLearnedFeatureLibrary(featureLibrary)
+    .filter(entry => entry.seenCount >= 2);
+  if (activeEntries.length === 0) return null;
+
+  for (const entry of activeEntries) {
+    const matched = entry.features.every(feature => {
+      if (feature.startsWith('joke:')) {
+        return `joke:${signals.jokeTemplateFamily}` === feature;
+      }
+      return Boolean(signals[feature]);
+    });
+    if (matched) return entry;
+  }
+  return null;
+}
+
+function upsertLearnedFeatureLibraryEntries(library, signatures) {
+  const now = Date.now();
+  const next = normalizeLearnedFeatureLibrary(library);
+  const byId = new Map(next.map(entry => [entry.id, entry]));
+
+  for (const features of signatures) {
+    const id = features.join('|');
+    const existing = byId.get(id);
+    if (existing) {
+      existing.seenCount += 1;
+      existing.lastSeenAt = now;
+    } else {
+      const created = normalizeLearnedFeatureEntry({
+        id,
+        features,
+        seenCount: 1,
+        createdAt: now,
+        lastSeenAt: now
+      });
+      next.push(created);
+      byId.set(id, created);
+    }
+  }
+
+  return next.sort((a, b) => {
+    if (b.seenCount !== a.seenCount) return b.seenCount - a.seenCount;
+    return b.lastSeenAt - a.lastSeenAt;
+  }).slice(0, 200);
+}
+
 function buildLocalRuleHit(tweet, confidence, reasons) {
   return {
     handle: String(tweet?.handle || ''),
@@ -1724,31 +1932,31 @@ function buildLocalRuleHit(tweet, confidence, reasons) {
 }
 
 function detectObviousBotReply(tweet, customKeywords = []) {
-  const text = String(tweet?.text || '').trim();
-  const displayName = String(tweet?.displayName || '');
-  const handle = String(tweet?.handle || '');
+  const signals = collectLocalFeatureSignals(tweet, customKeywords);
+  const {
+    text,
+    adultName,
+    cloudDrivePromo,
+    randomHandle,
+    tinyToken,
+    emojiOnly,
+    lowInfoMixed,
+    singleLetterEmojiLure,
+    suspiciousPromoText,
+    adultLureShortCopy,
+    urlLike,
+    lowEntropy,
+    lowInfoText,
+    defaultAvatar,
+    decorativeTemplate,
+    jokeTemplateFamily,
+    emojiBurst,
+    emojiDecoratedPhrase,
+    mathPrefix,
+    obscureScriptDeco,
+    decoratedCjkPattern
+  } = signals;
   const reasons = [];
-
-  const adultName = hasObviousBotKeyword(displayName, customKeywords) || hasObviousBotKeyword(handle, customKeywords);
-  const cloudDrivePromo = hasCloudDrivePromoSignal(text, customKeywords);
-  const randomHandle = looksLikeRandomHandle(handle);
-  const tinyToken = isTinyTokenReply(text);
-  const emojiOnly = isEmojiOnlyOrEmojiNumberReply(text);
-  const lowInfoMixed = isLowInfoMixedEmojiReply(text);
-  const singleLetterEmojiLure = isSingleLetterEmojiLureReply(text);
-  const suspiciousPromoText = hasSuspiciousPromoText(text);
-  const adultLureShortCopy = hasAdultLureShortCopy(text);
-  const urlLike = hasUrlLikeSignal(text);
-  const lowEntropy = hasLowTextEntropy(handle) || hasLowTextEntropy(displayName);
-  const lowInfoText = stripEmojiLikeChars(text).length <= 8;
-  const defaultAvatar = Boolean(tweet?.defaultProfileImage);
-  const decorativeTemplate = hasDecorativeTemplateSignal(text);
-  const jokeTemplateFamily = getEnglishJokeTemplateFamily(text);
-  const emojiBurst = hasEmojiBurst(text, 5);
-  const emojiDecoratedPhrase = hasEmojiDecoratedShortEnglishPhrase(text);
-  const mathPrefix = hasMathSymbolPrefix(text);
-  const obscureScriptDeco = hasObscureScriptDecoration(text);
-  const decoratedCjkPattern = hasDecoratedCjkBotPattern(text);
 
   if (adultName) reasons.push('display name or handle contains adult/spam lure keywords');
   if (cloudDrivePromo) reasons.push('reply text contains cloud-drive promo link keywords');
@@ -1856,6 +2064,16 @@ function detectObviousBotReply(tweet, customKeywords = []) {
 
   if (randomHandle && suspiciousPromoText && lowInfoText) {
     return buildLocalRuleHit(tweet, 0.89, reasons);
+  }
+
+  const learnedEntry = findLearnedFeatureMatch(signals);
+  if (learnedEntry) {
+    const learnedReasons = learnedEntry.features.map(featureReasonLabel);
+    return buildLocalRuleHit(
+      tweet,
+      Math.min(0.97, 0.91 + Math.min(0.04, Math.max(0, learnedEntry.seenCount - 2) * 0.02)),
+      [`matched auto-learned local feature signature`, ...learnedReasons]
+    );
   }
 
   return null;
@@ -2324,6 +2542,9 @@ async function startAnalysisForTab(tabId, overrides = {}) {
           reason: String(r.reason || ''),
           evidenceTweet: String(r.evidenceTweet || '')
         }));
+
+      await learnFromAiOnlyDetections(modelResults, prefilter.modelTweets, cfg)
+        .catch(e => console.warn('[AutoLearn] Failed to update local feature library:', e));
     }
 
     if (!aiAvailable) {
@@ -2416,6 +2637,50 @@ function getDeepScanStatusSnapshot() {
     completed: deepScanState.completed,
     candidates: deepScanState.candidates,
     error: deepScanState.error
+  };
+}
+
+async function learnFromAiOnlyDetections(modelResults, modelTweets, cfg) {
+  const threshold = Math.max(0.9, normalizeThreshold(cfg?.spamConfidenceThreshold));
+  const customKeywords = normalizeKeywordList(cfg?.obviousBotKeywords);
+  const tweetByHandle = new Map();
+
+  (modelTweets || []).forEach(tweet => {
+    const key = String(tweet?.handle || '').trim().toLowerCase();
+    if (key && !tweetByHandle.has(key)) {
+      tweetByHandle.set(key, tweet);
+    }
+  });
+
+  const signatures = [];
+  for (const result of modelResults || []) {
+    if (!result?.isSpamOrBot || Number(result.confidence || 0) < threshold) continue;
+    const key = String(result.handle || '').trim().toLowerCase();
+    const sourceTweet = tweetByHandle.get(key) || {
+      handle: result.handle,
+      displayName: result.displayName,
+      text: result.evidenceTweet || ''
+    };
+    if (detectObviousBotReply(sourceTweet, customKeywords)) continue;
+    const signals = collectLocalFeatureSignals(sourceTweet, customKeywords);
+    const signature = buildLearnedFeatureSignature(signals);
+    if (signature) {
+      signatures.push(signature);
+    }
+  }
+
+  if (signatures.length === 0) {
+    return { learned: 0, activated: 0 };
+  }
+
+  const nextLibrary = upsertLearnedFeatureLibraryEntries(autoLearnedFeatureLibrary, signatures);
+  const prevActive = autoLearnedFeatureLibrary.filter(entry => entry.seenCount >= 2).length;
+  const nextActive = nextLibrary.filter(entry => entry.seenCount >= 2).length;
+  setAutoLearnedFeatureLibrary(nextLibrary);
+  await storageSet({ [AUTO_LEARNED_FEATURES_KEY]: nextLibrary });
+  return {
+    learned: signatures.length,
+    activated: Math.max(0, nextActive - prevActive)
   };
 }
 
@@ -2554,6 +2819,8 @@ async function performDeepScan(cfg) {
       console.log(`[DeepScan] 模型分析 - 返回结果数: ${modelResults.length}`);
       results.push(...modelResults);
       detectAutoReplyBots(prefilter.modelTweets, modelResults);
+      await learnFromAiOnlyDetections(modelResults, prefilter.modelTweets, cfg)
+        .catch(e => console.warn('[AutoLearn] DeepScan update failed:', e));
       console.log(`[DeepScan] 自动回复检测后 - 总结果数: ${results.length}`);
     } else if (prefilter.modelTweets.length > 0) {
       deepScanState.currentStep = `AI 未启用，已用本地规则分析 ${filteredReplies.length} 条回复`;
@@ -2988,6 +3255,29 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     return true;
   }
 
+  if (msg.action === 'getAutoLearnedFeatures') {
+    loadAutoLearnedFeatureLibraryFromStorage()
+      .then(features => sendResponse({ ok: true, features }))
+      .catch(e => sendResponse({ ok: false, error: e.message }));
+    return true;
+  }
+
+  if (msg.action === 'removeAutoLearnedFeature') {
+    loadAutoLearnedFeatureLibraryFromStorage()
+      .then(() => removeAutoLearnedFeatureEntry(msg.id))
+      .then(features => sendResponse({ ok: true, features }))
+      .catch(e => sendResponse({ ok: false, error: e.message }));
+    return true;
+  }
+
+  if (msg.action === 'clearAutoLearnedFeatures') {
+    loadAutoLearnedFeatureLibraryFromStorage()
+      .then(() => clearAutoLearnedFeatureLibrary())
+      .then(features => sendResponse({ ok: true, features }))
+      .catch(e => sendResponse({ ok: false, error: e.message }));
+    return true;
+  }
+
   if (msg.action === 'testProviderConfig') {
     testProviderConfig()
       .then(result => sendResponse({ ok: true, result }))
@@ -3039,6 +3329,8 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
           : [];
         if (modelResults.length > 0) {
           detectAutoReplyBots(prefilter.modelTweets, modelResults);
+          await learnFromAiOnlyDetections(modelResults, prefilter.modelTweets, cfg)
+            .catch(e => console.warn('[AutoLearn] Legacy analyzeTweets update failed:', e));
         }
         return normalizeCandidates(results.concat(modelResults), cfg.spamConfidenceThreshold);
       })

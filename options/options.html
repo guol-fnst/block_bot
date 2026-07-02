@@ -150,6 +150,24 @@
     </section>
 
     <section class="card">
+      <div class="library-head">
+        <div>
+          <h2 id="text-library-title">Auto-Learned Feature Library</h2>
+          <p id="text-library-desc" class="desc">AI-only detections that share stable local signals are accumulated here after repeated matches. You can review them, remove individual entries, or clear the whole learned library.</p>
+        </div>
+        <div class="button-row library-actions">
+          <button class="btn btn-secondary" id="btn-refresh-library" type="button">Refresh</button>
+          <button class="btn btn-secondary" id="btn-clear-library" type="button">Clear Library</button>
+        </div>
+      </div>
+
+      <p class="desc small" id="text-library-status">Loading learned features...</p>
+      <div id="learned-features-empty" class="library-empty hidden">No auto-learned features yet.</div>
+      <div id="learned-features-list" class="feature-list hidden"></div>
+      <p id="library-msg" class="save-msg hidden"></p>
+    </section>
+
+    <section class="card">
       <h2 id="text-performance-title">性能调优</h2>
       <p id="text-performance-desc" class="desc">
         可按 API 配额与网络情况调节分析速度。并发和批量越大越快，但更容易触发服务商限流。
@@ -257,10 +275,6 @@
         屏蔽操作使用你已登录的 X 账号在本地浏览器内执行，带严格速率限制。当前页面可直接
         操作时会在当前标签页完成；当前页面无法完成时，扩展可能临时在后台打开一个 X 页面
         来完成同一笔屏蔽任务。
-      </p>
-      <p class="desc">
-        上架材料请同时提供仓库中的 <code>README.md</code> 与 <code>PRIVACY_POLICY.md</code>。
-        隐私政策需要放到公开可访问的 URL 后再填写到 Chrome Web Store。
       </p>
       <p class="desc version" id="text-version">版本 0.3.2</p>
     </section>
