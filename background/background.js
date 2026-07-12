@@ -27,6 +27,8 @@ const MAX_TASK_SESSIONS = 20;
 const MAX_CONCURRENT_ANALYSES = 2;
 const PERSIST_DEEP_SCAN_KEY  = 'deepScanPersist';
 const CIRCUIT_BREAKER_THRESHOLD = 5;
+const BLOCK_ACTION_MIN_DELAY_MS = 15000;
+const BLOCK_ACTION_MAX_DELAY_MS = 60000;
 
 const GEMINI_MODELS = [
   'gemini-3.1-flash-lite',
@@ -422,13 +424,22 @@ async function restorePersistedState() {
   }
 
   await loadAutoLearnedFeatureLibraryFromStorage().catch(() => {});
+
+  return !blockQueue.paused && blockQueue.queue.some(item => item.status === 'pending');
 }
 
 // Restore persisted state as soon as the service worker starts.
 // By the time the first message arrives (requires a popup round-trip),
 // this IIFE will have already completed.
 (async () => {
-  try { await restorePersistedState(); } catch (e) { console.error('[Persist] Restore failed:', e); }
+  try {
+    const shouldResumeBlockQueue = await restorePersistedState();
+    if (shouldResumeBlockQueue) {
+      runGlobalBlockQueue();
+    }
+  } catch (e) {
+    console.error('[Persist] Restore failed:', e);
+  }
 })();
 
 function tabsCreate(url, active = false) {
@@ -444,7 +455,15 @@ function tabsCreate(url, active = false) {
 }
 
 function tabsRemove(tabId) {
-  return new Promise(resolve => chrome.tabs.remove(tabId, () => resolve()));
+  return new Promise((resolve, reject) => {
+    chrome.tabs.remove(tabId, () => {
+      if (chrome.runtime.lastError) {
+        reject(new Error(chrome.runtime.lastError.message));
+      } else {
+        resolve();
+      }
+    });
+  });
 }
 
 function tabsUpdate(tabId, updateProperties) {
@@ -657,10 +676,26 @@ function getBlockStatusSnapshot() {
   };
 }
 
+function updatePendingBadge() {
+  if (!chrome.action) return;
+
+  const pending = blockQueue.queue.filter(item => item.status === 'pending').length;
+  const text = pending > 999 ? '999+' : (pending > 0 ? String(pending) : '');
+  try {
+    const badgeTextRequest = chrome.action.setBadgeText({ text });
+    if (badgeTextRequest?.catch) badgeTextRequest.catch(() => {});
+    if (pending > 0) {
+      const badgeColorRequest = chrome.action.setBadgeBackgroundColor({ color: '#d93025' });
+      if (badgeColorRequest?.catch) badgeColorRequest.catch(() => {});
+    }
+  } catch (_) {}
+}
+
 function recalcTotals() {
   blockQueue.total  = blockQueue.queue.length;
   blockQueue.done   = blockQueue.queue.filter(i => i.status === 'done').length;
   blockQueue.failed = blockQueue.queue.filter(i => i.status === 'failed').length;
+  updatePendingBadge();
   // Persist after every status change so SW restarts lose at most one item.
   saveBlockQueueState();
 }
@@ -757,6 +792,7 @@ async function runGlobalBlockQueue() {
       item.status = 'running';
       item.attempts += 1;
       blockQueue.current = item.handle;
+      updatePendingBadge();
       const actionType = normalizeModerationAction(item.actionType);
 
       try {
@@ -808,8 +844,8 @@ async function runGlobalBlockQueue() {
 
       const hasPending = blockQueue.queue.some(i => i.status === 'pending');
       if (hasPending) {
-        // Faster randomized pace requested by user.
-        await sleep(1000 + Math.random() * 2000);
+        const delay = BLOCK_ACTION_MIN_DELAY_MS + Math.random() * (BLOCK_ACTION_MAX_DELAY_MS - BLOCK_ACTION_MIN_DELAY_MS);
+        await sleep(delay);
       }
     }
   } finally {

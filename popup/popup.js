@@ -654,6 +654,7 @@ async function init() {
   await loadUiLanguage();
   await setupLanguageSelector();
   applyStaticTranslations();
+  document.getElementById('extension-version').textContent = `v${chrome.runtime.getManifest().version}`;
 
   const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
   const tab = tabs[0];
