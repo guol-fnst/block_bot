@@ -841,6 +841,8 @@ async function runGlobalBlockQueue() {
       }
 
       recalcTotals();
+      // Do not leave the last profile page open during the pacing delay.
+      await cleanupWorkerTab();
 
       const hasPending = blockQueue.queue.some(i => i.status === 'pending');
       if (hasPending) {
