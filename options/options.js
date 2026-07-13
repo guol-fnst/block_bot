@@ -47,7 +47,7 @@ const I18N = {
     thresholdDesc: '例如设置为 90，则 89% 及以下不会进入屏蔽候选。',
     labelKeywords: '本地预过滤关键词',
     keywordsDesc: '这些关键词会匹配账号昵称和 handle。命中后还会结合极短回复、随机 ID 等信号，在调用 AI 前先进入候选。',
-    btnSaveThreshold: '保存阈值',
+    btnSaveThreshold: '保存',
     sectionPerformanceTitle: '性能调优',
     sectionPerformanceDesc: '可按 API 配额与网络情况调节分析速度。并发和批量越大越快，但更容易触发服务商限流。',
     btnSavePerformance: '保存性能参数',
@@ -56,7 +56,7 @@ const I18N = {
     labelCustomPrompt: '自定义规则',
     btnSavePrompt: '保存提示词',
     sectionAboutTitle: '关于',
-    versionText: '版本 0.3.4',
+    versionText: '版本 {version}',
     errGeminiKeyRequired: '请输入 Gemini API Key',
     errGeminiPrefix: 'Gemini Key 通常以 "AIza" 开头',
     okGeminiSaved: 'Gemini 配置已保存 ✓',
@@ -89,7 +89,7 @@ const I18N = {
     thresholdDesc: 'For example, if set to 90, anything at 89% or below will not appear in candidates.',
     labelKeywords: 'Local Prefilter Keywords',
     keywordsDesc: 'Keywords match display names and handles. Hits are combined with short-reply/random-ID signals before AI calls.',
-    btnSaveThreshold: 'Save Threshold',
+    btnSaveThreshold: 'Save',
     sectionPerformanceTitle: 'Performance Tuning',
     sectionPerformanceDesc: 'Tune speed based on API quota and network. Larger batch/concurrency is faster but may trigger rate limits sooner.',
     btnSavePerformance: 'Save Performance Settings',
@@ -98,7 +98,7 @@ const I18N = {
     labelCustomPrompt: 'Custom Rules',
     btnSavePrompt: 'Save Prompt',
     sectionAboutTitle: 'About',
-    versionText: 'Version 0.3.4',
+    versionText: 'Version {version}',
     errGeminiKeyRequired: 'Please enter a Gemini API key',
     errGeminiPrefix: 'Gemini keys usually start with "AIza"',
     okGeminiSaved: 'Gemini configuration saved ✓',
@@ -237,7 +237,7 @@ function applyStaticTranslations() {
   setText('label-custom-prompt', t('labelCustomPrompt'));
   setText('btn-save-prompt', t('btnSavePrompt'));
   setText('text-about-title', t('sectionAboutTitle'));
-  setText('text-version', t('versionText'));
+  setText('text-version', t('versionText', { version: chrome.runtime.getManifest().version }));
   if (currentLearnedFeatures.length > 0) {
     renderLearnedFeatureLibrary(currentLearnedFeatures);
   }

@@ -222,6 +222,23 @@ assertDetected('maya58925857 (炮友 keyword)',
 assertDetected('adultname + random handle',
   { handle: '@xhdsj8823441', displayName: '找炮友', text: '🌸' }, 0.88);
 
+const builtInDirectNameKeywordHit = detectObviousBotReply(
+  { handle: '@KianaJakabjdf', displayName: '\u5173\u7389 \u{1F338}\u540C\u57CE\u4E0A\u95E8\u{1F338}\u9644\u8FD1\u559D\u{1F375}', text: 'jam\ndrain\n\u679C\u9171\n\u6D41\u8D70' }
+);
+assertTruthy('built-in 同城 in display name is direct local hit',
+  builtInDirectNameKeywordHit && builtInDirectNameKeywordHit.isSpamOrBot && builtInDirectNameKeywordHit.confidence >= 0.9);
+const customNameKeywordHit = detectObviousBotReply(
+  { handle: '@KianaJakabjdf', displayName: '\u5173\u7389 \u{1F338}\u9644\u8FD1\u559D\u{1F375}', text: 'jam\ndrain\n\u679C\u9171\n\u6D41\u8D70' },
+  ['\u9644\u8FD1']
+);
+assertTruthy('custom keyword in display name is direct local hit',
+  customNameKeywordHit && customNameKeywordHit.isSpamOrBot && customNameKeywordHit.confidence >= 0.9);
+const builtInNearbyNameKeywordHit = detectObviousBotReply(
+  { handle: '@KianaJakabjdf', displayName: '\u5173\u7389 \u{1F338}\u9644\u8FD1\u559D\u{1F375}', text: 'jam\ndrain\n\u679C\u9171\n\u6D41\u8D70' }
+);
+assertTruthy('built-in keyword in display name is direct local hit',
+  builtInNearbyNameKeywordHit && builtInNearbyNameKeywordHit.isSpamOrBot && builtInNearbyNameKeywordHit.confidence >= 0.9);
+
 section('detectObviousBotReply — joke template bots');
 assertDetected('why-did joke template',
   { handle: '@abcde12345', displayName: 'Fun Bot',

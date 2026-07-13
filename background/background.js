@@ -27,8 +27,8 @@ const MAX_TASK_SESSIONS = 20;
 const MAX_CONCURRENT_ANALYSES = 2;
 const PERSIST_DEEP_SCAN_KEY  = 'deepScanPersist';
 const CIRCUIT_BREAKER_THRESHOLD = 5;
-const BLOCK_ACTION_MIN_DELAY_MS = 15000;
-const BLOCK_ACTION_MAX_DELAY_MS = 60000;
+const BLOCK_ACTION_MIN_DELAY_MS = 5000;
+const BLOCK_ACTION_MAX_DELAY_MS = 15000;
 
 const GEMINI_MODELS = [
   'gemini-3.1-flash-lite',
@@ -841,11 +841,14 @@ async function runGlobalBlockQueue() {
       }
 
       recalcTotals();
-      // Do not leave the last profile page open during the pacing delay.
-      await cleanupWorkerTab();
 
       const hasPending = blockQueue.queue.some(i => i.status === 'pending');
       if (hasPending) {
+        // Navigate worker tab to a neutral page during the pacing delay
+        // instead of closing and reopening it on the next iteration.
+        if (blockQueue.workerTabId) {
+          await tabsUpdate(blockQueue.workerTabId, { url: 'https://x.com/home', active: false }).catch(() => {});
+        }
         const delay = BLOCK_ACTION_MIN_DELAY_MS + Math.random() * (BLOCK_ACTION_MAX_DELAY_MS - BLOCK_ACTION_MIN_DELAY_MS);
         await sleep(delay);
       }
@@ -1553,6 +1556,13 @@ function hasObviousBotKeyword(text, customKeywords = []) {
     .some(keyword => value.includes(keyword.toLowerCase()));
 }
 
+function hasKeywordFromList(text, keywords = []) {
+  const value = String(text || '').toLowerCase();
+  if (!value) return false;
+  return normalizeKeywordList(keywords)
+    .some(keyword => value.includes(keyword.toLowerCase()));
+}
+
 function looksLikeRandomHandle(handle) {
   const slug = String(handle || '').replace(/^@/, '');
   return (
@@ -1823,6 +1833,7 @@ function collectLocalFeatureSignals(tweet, customKeywords = []) {
     text,
     displayName,
     handle,
+    directNameKeyword: hasObviousBotKeyword(displayName, customKeywords) || hasKeywordFromList(handle, customKeywords),
     adultName: hasObviousBotKeyword(displayName, customKeywords) || hasObviousBotKeyword(handle, customKeywords),
     cloudDrivePromo: hasCloudDrivePromoSignal(text, customKeywords),
     randomHandle: looksLikeRandomHandle(handle),
@@ -1992,6 +2003,7 @@ function detectObviousBotReply(tweet, customKeywords = []) {
   const signals = collectLocalFeatureSignals(tweet, customKeywords);
   const {
     text,
+    directNameKeyword,
     adultName,
     cloudDrivePromo,
     randomHandle,
@@ -2015,7 +2027,8 @@ function detectObviousBotReply(tweet, customKeywords = []) {
   } = signals;
   const reasons = [];
 
-  if (adultName) reasons.push('display name or handle contains adult/spam lure keywords');
+  if (directNameKeyword) reasons.push('display name contains a built-in/custom keyword or handle contains a custom local keyword');
+  if (adultName && !directNameKeyword) reasons.push('display name or handle contains adult/spam lure keywords');
   if (cloudDrivePromo) reasons.push('reply text contains cloud-drive promo link keywords');
   if (randomHandle) reasons.push('handle looks randomly generated');
   if (tinyToken) reasons.push('reply text is only a tiny token/number');
@@ -2121,6 +2134,10 @@ function detectObviousBotReply(tweet, customKeywords = []) {
 
   if (randomHandle && suspiciousPromoText && lowInfoText) {
     return buildLocalRuleHit(tweet, 0.89, reasons);
+  }
+
+  if (directNameKeyword) {
+    return buildLocalRuleHit(tweet, 0.9, reasons);
   }
 
   const learnedEntry = findLearnedFeatureMatch(signals);
