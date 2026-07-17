@@ -1479,6 +1479,8 @@ const BUILT_IN_OBVIOUS_BOT_KEYWORDS = [
   'nude',
   '\u597d\u6da9',
   '\u7b2c\u4e00\u9a9a',
+  '\u5904\u7537',
+  '\u65e0\u507f',
   'casino',
   '夸克网盘',
   '夸克盘',
@@ -1642,8 +1644,41 @@ function hasAdultLureShortCopy(text) {
   return ADULT_LURE_SHORTCOPY_PATTERNS.some(pattern => pattern.test(value) || pattern.test(normalized));
 }
 
+function hasAdultOffsiteMentionLure(text) {
+  const raw = String(text || '');
+  if (!raw) return false;
+  const compact = compactText(raw).toLowerCase();
+  if (compact.length > 120) return false;
+
+  const hasMentionAndCode = /@[a-z0-9_]{3,20}\s*[0-9][a-z]\b/i.test(raw) || /@[a-z0-9_]{3,20}/i.test(raw);
+  const hasAdultRouteCopy = (
+    /\u5237\u4e86\u534a\u5929\u7684?x[a-z]{0,3}\u5c31\u5979\u7684?\u4e3b\u9875\u80fd\u6253(?:\u2708\ufe0f?|\u98de\u673a)?\u4e86?/iu.test(compact) ||
+    /(?:30\+\u7684?)?[a-z]{0,3}\u4f53\u5236\u5185\u8001\u5e08.*(?:sao|\u9a9a|\u8fd4\u5dee|\u53cd\u5dee)/iu.test(compact) ||
+    /\u5979\u592a(?:\u6da9|\u6da9)\u4e86?[a-z]{0,3}\u6211\u771f\u9876\u4e0d\u4f4f/iu.test(compact)
+  );
+  return hasMentionAndCode && hasAdultRouteCopy;
+}
+
+function hasViralLeakShortlinkLure(text) {
+  const raw = String(text || '');
+  if (!raw) return false;
+  const compact = compactText(raw).toLowerCase();
+  return /sunny\d*/i.test(compact) &&
+    /(?:\u91d1\u4e3b|\u74dc|\u5b9e\u9524|\u5feb\u4fdd\u5b58|\u522b\u5220)/u.test(compact) &&
+    hasUrlLikeSignal(raw);
+}
+
+function hasKuaishouSunnyLure(text) {
+  const compact = compactText(text).toLowerCase();
+  if (!compact || compact.length > 120) return false;
+  return /sunny/i.test(compact) &&
+    compact.includes('\u5feb\u624b') &&
+    (compact.includes('\u5b8b\u83b2\u83b2\u4e16\u754c\u7b2c\u4e00') || compact.includes('\u76f4\u64ad')) &&
+    (compact.includes('\u4e14\u73cd\u60dc') || compact.includes('\u5361\u70b9\u8e72\u5b88'));
+}
+
 function hasUrlLikeSignal(text) {
-  return /(https?:\/\/|www\.|t\.co\/|bit\.ly\/|tinyurl\.com\/|t\.me\/|wa\.me\/|discord\.gg\/|line\.me\/)/i.test(String(text || ''));
+  return /(https?:\/\/|www\.|t\.co\/|t\.cn\/|bit\.ly\/|tinyurl\.com\/|t\.me\/|wa\.me\/|discord\.gg\/|line\.me\/)/i.test(String(text || ''));
 }
 
 function hasLowTextEntropy(text) {
@@ -2062,6 +2097,18 @@ function detectObviousBotReply(tweet, customKeywords = []) {
 
   if (adultLureShortCopy) {
     return buildLocalRuleHit(tweet, 0.93, reasons);
+  }
+
+  if (hasAdultOffsiteMentionLure(text)) {
+    return buildLocalRuleHit(tweet, 0.94, [...reasons, 'reply text routes adult-lure copy to another @ account']);
+  }
+
+  if (hasViralLeakShortlinkLure(text)) {
+    return buildLocalRuleHit(tweet, 0.94, [...reasons, 'reply text uses viral leak bait with a short link']);
+  }
+
+  if (hasKuaishouSunnyLure(text)) {
+    return buildLocalRuleHit(tweet, 0.91, [...reasons, 'reply text matches repeated off-platform creator lure copy']);
   }
 
   if (suspiciousPromoText && lowInfoText) {

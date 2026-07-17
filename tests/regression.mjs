@@ -549,6 +549,28 @@ assertDetected('@mmfrancisco16 too-sexy variant',
 assertDetected('@Jhoan_Sanchz too-sexy variant #2',
   { handle: '@Jhoan_Sanchz', displayName: 'Jhoann S\u00E1nchez', text: '\u5979\u592a\u6da9\u4e86w \u6211\u771f\u9876\u4e0d\u4f4f @yunbaozw 3x' }, 0.9);
 
+section('detectObviousBotReply -- reported sunny/off-platform lure samples');
+assertDetected('@jbarmstead sunny kuaishou copy',
+  { handle: '@jbarmstead', displayName: 'jbarmstead', text: 'sunny\u65e9\u5c31\u8f6c\u79fb\u5230\u5feb\u624b\u4e86\uff0c\u53eb\uff08\u5b8b\u83b2\u83b2\u4e16\u754c\u7b2c\u4e00\uff09\uff0c\u53d1\u7684\u4f5c\u54c1\u8fd8\u662f\u90a3\u4e48\u9876\uff0c\u76f4\u64ad\u5f97\u5361\u70b9\u8e72\u5b88\uff0c\u4e0d\u8fc7\u786e\u5b9e\u4e14\u73cd\u60dc\u{1F602}' }, 0.9);
+assertDetected('@geovanna3578 sunny kuaishou copy',
+  { handle: '@geovanna3578', displayName: 'Geovanna Lima', text: 'sunny\u65e9\u5c31\u8f6c\u79fb\u5230\u5feb\u624b\u4e86\uff0c\u53eb\uff08\u5b8b\u83b2\u83b2\u4e16\u754c\u7b2c\u4e00\uff09\uff0c\u53d1\u7684\u4f5c\u54c1\u8fd8\u662f\u90a3\u4e48\u9876\uff0c\u76f4\u64ad\u5f97\u5361\u70b9\u8e72\u5b88\uff0c\u4e0d\u8fc7\u786e\u5b9e\u4e14\u73cd\u60dc\u{1F602}' }, 0.9);
+assertDetected('@mijailcc sunny shortlink leak bait',
+  { handle: '@mijailcc', displayName: 'mijail campos', text: '\u5367\u69fdsunny77\u548c\u91d1\u4e3b\u7684\u74dc\u5b9e\u9524\u4e86\uff1f\u{1F60D}\u5feb\u4fdd\u5b58\u522b\u5220 http://t.cn/AXKphDbP' }, 0.9);
+assertDetected('@maraudingGhost homepage mention lure',
+  { handle: '@maraudingGhost', displayName: 'Ghost', text: '\u5237\u4e86\u534a\u5929\u7684X sx\u5c31\u5979\u7684\u4e3b\u9875\u80fd\u6253\u2708\ufe0f\u4e86 @kikiynk 6f' }, 0.9);
+assertDetected('@michael_lubrani teacher mention lure',
+  { handle: '@michael_lubrani', displayName: 'Michael', text: 'yc\u4f53\u5236\u5185\u8001\u5e08 sao\u7684\u5f88 @qsywls 2c' }, 0.9);
+assertDetected('@janecarvalho556 too-sexy short mention lure',
+  { handle: '@janecarvalho556', displayName: 'Jane Carvalho', text: '\u5979\u592a\u6da9\u4e86be \u6211\u771f\u9876\u4e0d\u4f4f @yzcsoo 4h' }, 0.9);
+assertDetected('@Deivid_98R homepage mention lure',
+  { handle: '@Deivid_98R', displayName: 'David Torres', text: '\u5237\u4e86\u534a\u5929\u7684X xk\u5c31\u5979\u7684\u4e3b\u9875\u80fd\u6253\u2708\ufe0f\u4e86 @tbovsl 8c' }, 0.9);
+assertDetected('@CamCamwells1994 homepage mention lure',
+  { handle: '@CamCamwells1994', displayName: '\u0138\u03b9ng ja\u043c\u0259\u0455', text: '\u5237\u4e86\u534a\u5929\u7684X go\u5c31\u5979\u4e3b\u9875\u80fd\u6253\u2708\ufe0f\u4e86 @yzcsoo 1y' }, 0.9);
+assertDetected('@YasBitchKiara teacher mention lure',
+  { handle: '@YasBitchKiara', displayName: 'Keeekz\u{1F98B}', text: '30+\u7684fj\u4f53\u5236\u5185\u8001\u5e08 \u73a9\u7684\u5c31\u662f\u8fd4\u5dee @taocczf 9b' }, 0.9);
+assertDetected('@EdgardoSumue adult display name emoji-only',
+  { handle: '@EdgardoSumue', displayName: '\u7efe\u7efe\uff0c\u{1F491}\u5904\u7537\u65e0\u507f\u{1F491}', text: '\u{1F975}' }, 0.9);
+
 section('detectObviousBotReply — long decorative inspirational bots');
 assertDetected('@Yaekn131039',
   { handle: '@Yaekn131039', displayName: 'Yaekn', text: '\u22c6\ua9bf\ud83c\udf42\ua673\u0f18\u26f8\ufe0f Even gloomy cloudy rainy days become warm once we have a nice casual chat together slowly. \u0f18\u26ec\ua9bf\u0f18\u22c6 \ud83c\udf6c \ud83c\udf44 \ud83d\udd25 \ud83d\ude80' }, 0.9);
