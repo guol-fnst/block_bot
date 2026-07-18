@@ -169,6 +169,18 @@ function humanDelay(minMs, maxMs) {
   return sleep(minMs + Math.floor(Math.random() * (maxMs - minMs + 1)));
 }
 
+async function interruptibleDelay(minMs, maxMs) {
+  const total = minMs + Math.floor(Math.random() * (maxMs - minMs + 1));
+  const step = 200;
+  let elapsed = 0;
+  while (elapsed < total) {
+    if (deepScanState.cancelled || deepScanState.paused) return;
+    const wait = Math.min(step, total - elapsed);
+    await sleep(wait);
+    elapsed += wait;
+  }
+}
+
 function withTimeout(promise, timeoutMs, timeoutMsg) {
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => reject(new Error(timeoutMsg)), timeoutMs);
@@ -2560,9 +2572,10 @@ async function startAnalysisForTab(tabId, overrides = {}) {
     }
     const targetRounds = Math.ceil(cfg.scrapeMaxTweets / 6);
     const effectiveScrapeRounds = Math.min(300, Math.max(cfg.scrapeMaxRounds, targetRounds));
+    const humanScrollOverheadMs = effectiveScrapeRounds * 1000;
     const scrapeTimeoutMs = Math.min(
       600000,
-      Math.max(15000, cfg.scrapeScrollWaitMs * effectiveScrapeRounds + 15000)
+      Math.max(15000, cfg.scrapeScrollWaitMs * effectiveScrapeRounds + humanScrollOverheadMs + 15000)
     );
 
     const scrapeResp = await withTimeout(
@@ -2869,7 +2882,7 @@ async function performDeepScan(cfg) {
       await waitForTabLoaded(workerTab.id, 15000);
     } catch (_) {}
 
-    await humanDelay(2000, 5000);
+    await interruptibleDelay(2000, 5000);
 
     deepScanState.currentStep = '正在采集最近的帖子链接…';
     const postUrls = await collectUserPostLinks(workerTab.id, maxPosts, handle, cfg);
@@ -2926,9 +2939,9 @@ async function performDeepScan(cfg) {
 
       if ((i + 1) % 5 === 0 && i < postUrls.length - 1) {
         console.log(`[DeepScan] 模拟人类休息，暂停 ${8}-${15} 秒…`);
-        await humanDelay(8000, 15000);
+        await interruptibleDelay(8000, 15000);
       } else {
-        await humanDelay(3000, 8000);
+        await interruptibleDelay(3000, 8000);
       }
     }
 
@@ -3097,8 +3110,8 @@ async function collectUserPostLinks(tabId, maxLinks = 20, targetHandle = '', cfg
       return true;
     }).catch(() => {});
     const baseWait = stagnantRounds > 0 ? waitMs : Math.max(600, Math.round(waitMs * 0.82));
-    const jitter = Math.floor(baseWait * (0.8 + Math.random() * 0.4));
-    await sleep(baseWait + jitter);
+    const total = Math.floor(baseWait * (0.8 + Math.random() * 0.4));
+    await sleep(total);
   }
 
   return links.slice(0, maxLinks);
@@ -3198,9 +3211,10 @@ async function collectPostReplies(tabId, maxReplies = 100, cfg = {}) {
   const stagnantRounds = normalizeScrapeStagnantRounds(cfg.scrapeStagnantRounds);
   const targetBasedRounds = Math.ceil(maxReplies / 6);
   const effectiveRounds = Math.min(300, Math.max(maxRounds, targetBasedRounds));
+  const humanScrollOverheadMs = effectiveRounds * 1000;
   const scrapeTimeoutMs = Math.min(
     600000,
-    Math.max(20000, waitMs * effectiveRounds + 25000)
+    Math.max(20000, waitMs * effectiveRounds + humanScrollOverheadMs + 25000)
   );
 
   const repliesAppearTimeout = Math.max(15000, Math.round(waitMs * 8));
