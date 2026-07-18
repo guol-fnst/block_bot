@@ -165,6 +165,10 @@ function sleep(ms) {
   return new Promise(r => setTimeout(r, ms));
 }
 
+function humanDelay(minMs, maxMs) {
+  return sleep(minMs + Math.floor(Math.random() * (maxMs - minMs + 1)));
+}
+
 function withTimeout(promise, timeoutMs, timeoutMsg) {
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => reject(new Error(timeoutMsg)), timeoutMs);
@@ -2865,6 +2869,8 @@ async function performDeepScan(cfg) {
       await waitForTabLoaded(workerTab.id, 15000);
     } catch (_) {}
 
+    await humanDelay(2000, 5000);
+
     deepScanState.currentStep = '正在采集最近的帖子链接…';
     const postUrls = await collectUserPostLinks(workerTab.id, maxPosts, handle, cfg);
     console.log(`[DeepScan] 采集到 ${postUrls.length} 条帖子链接`);
@@ -2903,6 +2909,8 @@ async function performDeepScan(cfg) {
         await waitForTabLoaded(workerTab.id, 12000);
       } catch (_) {}
 
+      await humanDelay(1000, 3000);
+
       const replies = await collectPostReplies(workerTab.id, maxRepliesPerPost, cfg);
       console.log(`[DeepScan] 第 ${i + 1} 条帖子采集到 ${replies.length} 条回复`);
       deepScanState.repliesCollected.push(...replies);
@@ -2916,7 +2924,12 @@ async function performDeepScan(cfg) {
         break;
       }
 
-      await sleep(1500);
+      if ((i + 1) % 5 === 0 && i < postUrls.length - 1) {
+        console.log(`[DeepScan] 模拟人类休息，暂停 ${8}-${15} 秒…`);
+        await humanDelay(8000, 15000);
+      } else {
+        await humanDelay(3000, 8000);
+      }
     }
 
     if (deepScanState.repliesCollected.length === 0) {
@@ -3075,15 +3088,17 @@ async function collectUserPostLinks(tabId, maxLinks = 20, targetHandle = '', cfg
       }
 
       const root = getPreferredScrollRoot();
+      const scrollDelta = Math.max(window.innerHeight * 0.9, 800) * (0.85 + Math.random() * 0.3);
       if (!root || root === document.documentElement || root === document.body || root === document.scrollingElement) {
-        window.scrollBy({ top: Math.max(window.innerHeight * 0.9, 800), behavior: 'auto' });
+        window.scrollBy({ top: scrollDelta, behavior: 'smooth' });
       } else {
-        root.scrollBy({ top: Math.max(window.innerHeight * 0.9, 800), behavior: 'auto' });
+        root.scrollBy({ top: scrollDelta, behavior: 'smooth' });
       }
       return true;
     }).catch(() => {});
-    const waitNextMs = stagnantRounds > 0 ? waitMs : Math.max(600, Math.round(waitMs * 0.82));
-    await sleep(waitNextMs);
+    const baseWait = stagnantRounds > 0 ? waitMs : Math.max(600, Math.round(waitMs * 0.82));
+    const jitter = Math.floor(baseWait * (0.8 + Math.random() * 0.4));
+    await sleep(baseWait + jitter);
   }
 
   return links.slice(0, maxLinks);
@@ -3176,6 +3191,8 @@ async function scrollTabToTop(tabId, waitMs = 800) {
 }
 
 async function collectPostReplies(tabId, maxReplies = 100, cfg = {}) {
+  await humanDelay(500, 2000);
+
   const waitMs = normalizeScrapeScrollWaitMs(cfg.scrapeScrollWaitMs);
   const maxRounds = normalizeScrapeMaxRounds(cfg.scrapeMaxRounds);
   const stagnantRounds = normalizeScrapeStagnantRounds(cfg.scrapeStagnantRounds);
@@ -3183,7 +3200,7 @@ async function collectPostReplies(tabId, maxReplies = 100, cfg = {}) {
   const effectiveRounds = Math.min(300, Math.max(maxRounds, targetBasedRounds));
   const scrapeTimeoutMs = Math.min(
     600000,
-    Math.max(20000, waitMs * effectiveRounds + 20000)
+    Math.max(20000, waitMs * effectiveRounds + 25000)
   );
 
   const repliesAppearTimeout = Math.max(15000, Math.round(waitMs * 8));

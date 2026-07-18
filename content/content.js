@@ -300,6 +300,21 @@
     root.scrollBy({ top, behavior: 'auto' });
   }
 
+  async function humanScrollBy(root, totalDelta) {
+    if (!root) return;
+    const steps = Math.max(4, Math.min(12, Math.round(Math.abs(totalDelta) / 120)));
+    let remaining = totalDelta;
+    for (let i = 0; i < steps && Math.abs(remaining) > 1; i++) {
+      const isLast = i === steps - 1;
+      const fraction = 1 / (steps - i);
+      const stepBase = remaining * fraction;
+      const stepDelta = isLast ? remaining : stepBase * (0.75 + Math.random() * 0.5);
+      scrollRootBy(root, stepDelta);
+      remaining -= stepDelta;
+      if (!isLast) await sleep(20 + Math.random() * 60);
+    }
+  }
+
   async function scrollToPageTop(waitMs) {
     const settleMs = Math.max(250, Math.min(1200, Math.round(waitMs * 0.75)));
     let stableRounds = 0;
@@ -448,14 +463,16 @@
           lastScrollTop = confirmMetrics.top;
         }
 
-        scrollRootBy(root, Math.max(window.innerHeight * 0.9, 800));
+        const baseDelta = Math.max(window.innerHeight * 0.9, 800);
+        await humanScrollBy(root, baseDelta * (0.85 + Math.random() * 0.3));
         // 增量采集场景下可以稍快一些，停滞时会自动回到完整等待。
         const waitNextMs = stagnantRounds > 0 ? waitMs : Math.max(600, Math.round(waitMs * 0.82));
         await sleep(waitNextMs);
       }
 
       // 最终再滚动一次并等待，确保末尾推文不遗漏
-      scrollRootBy(getPreferredScrollRoot(), Math.max(window.innerHeight * 1.2, 1000));
+      const finalBase = Math.max(window.innerHeight * 1.2, 1000);
+      await humanScrollBy(getPreferredScrollRoot(), finalBase * (0.85 + Math.random() * 0.3));
       await sleep(confirmWaitMs);
       mergeTweetsIntoMap(merged, collectVisibleTweets(threadContext));
       return Array.from(merged.values()).slice(0, maxTweets).map(({ uniqueId, ...tweet }) => tweet);
