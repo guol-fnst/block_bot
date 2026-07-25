@@ -556,6 +556,47 @@ body {
   border-color: #1d9bf0;
 }
 
+.keyword-block-panel {
+  margin: 0 0 10px;
+  padding: 8px 0 4px;
+  border-top: 1px solid #e6e8eb;
+}
+
+.keyword-search-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 68px auto;
+  gap: 6px;
+  align-items: center;
+}
+
+.keyword-search-input,
+.keyword-limit-input {
+  min-width: 0;
+  height: 34px;
+  font-size: 12px;
+}
+
+.keyword-limit-input {
+  text-align: center;
+}
+
+.keyword-search-row .btn {
+  height: 34px;
+  padding: 6px 8px;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.keyword-search-status {
+  margin-top: 6px;
+  min-height: 16px;
+  line-height: 1.35;
+}
+
+.keyword-search-status.error {
+  color: #cf222e;
+}
+
 .toggle-label {
   display: flex;
   align-items: center;

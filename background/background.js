@@ -2525,6 +2525,62 @@ async function sendToTabSafe(tabId, msg) {
   }
 }
 
+function buildUserSearchUrl(keyword) {
+  const q = String(keyword || '').trim();
+  return `https://x.com/search?q=${encodeURIComponent(q)}&src=typed_query&f=user`;
+}
+
+async function searchUsersAndEnqueue(keyword, options = {}) {
+  const q = String(keyword || '').trim();
+  if (!q) throw new Error('请输入搜索关键字');
+
+  const maxUsers = normalizeInt(options.maxUsers, 1, 1000, 100);
+  const sourceUrl = buildUserSearchUrl(q);
+  let tabId = null;
+
+  try {
+    const tab = await tabsCreate(sourceUrl, false);
+    tabId = tab.id;
+    await waitForTabLoaded(tabId, 25000).catch(() => {});
+    await sleep(1200);
+
+    const maxRounds = Math.max(8, Math.ceil(maxUsers / 5));
+    const scrapeResp = await withTimeout(
+      sendToTabSafe(tabId, {
+        action: 'scrapeUsers',
+        scrapeConfig: {
+          maxUsers,
+          maxRounds,
+          scrollWaitMs: DEFAULT_SCRAPE_SCROLL_WAIT_MS,
+          stagnantRounds: DEFAULT_SCRAPE_STAGNANT_ROUNDS
+        }
+      }),
+      Math.min(180000, Math.max(30000, maxRounds * DEFAULT_SCRAPE_SCROLL_WAIT_MS + 20000)),
+      '用户搜索采集超时，请稍后重试'
+    );
+
+    if (!scrapeResp?.ok) {
+      throw new Error(scrapeResp?.error || '用户搜索采集失败');
+    }
+
+    const users = Array.isArray(scrapeResp.users) ? scrapeResp.users : [];
+    const added = enqueueBlockAccounts(users, {
+      scannedCount: users.length,
+      candidateCount: users.length,
+      sourceUrl,
+      actionType: normalizeModerationAction(options.actionType)
+    });
+    if (added > 0) {
+      runGlobalBlockQueue();
+    }
+    return { users, added, sourceUrl };
+  } finally {
+    if (tabId) {
+      await tabsRemove(tabId).catch(() => {});
+    }
+  }
+}
+
 async function setAnalysisState(tabId, state) {
   const key = analysisKey(tabId);
   await storageSet({
@@ -3309,6 +3365,22 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     runGlobalBlockQueue();
     sendResponse({ ok: true, added, status: getBlockStatusSnapshot() });
     return false;
+  }
+
+  if (msg.action === 'searchUsersAndEnqueue') {
+    searchUsersAndEnqueue(msg.keyword, {
+      maxUsers: msg.maxUsers,
+      actionType: msg.actionType
+    })
+      .then(result => sendResponse({
+        ok: true,
+        found: result.users.length,
+        added: result.added,
+        sourceUrl: result.sourceUrl,
+        status: getBlockStatusSnapshot()
+      }))
+      .catch(e => sendResponse({ ok: false, error: e.message }));
+    return true;
   }
 
   if (msg.action === 'getGlobalBlockStatus') {

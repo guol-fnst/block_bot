@@ -27,6 +27,7 @@ let providerConfigured = true;
 let aiAnalysisEnabled = false;
 let reviewPromptState = null;
 let canOpenStoreReview = false;
+let keywordSearchRunning = false;
 
 const REVIEW_PROMPT_KEY = 'reviewPromptState';
 const REVIEW_MIN_SUCCESSFUL_BLOCKS = 12;
@@ -120,6 +121,14 @@ const I18N = {
     labelActionMode: '执行动作',
     actionBlock: '屏蔽',
     actionHide: '隐藏',
+    labelKeywordUserSearch: '按关键字搜索用户',
+    keywordPlaceholder: '关键词',
+    btnKeywordUserBlock: '搜索并加入队列',
+    keywordSearching: '正在搜索用户并加入队列…',
+    keywordSearchRequired: '请输入搜索关键字',
+    keywordSearchDone: '搜索到 {found} 个用户，新增 {added} 个任务。',
+    keywordSearchNoNew: '搜索到 {found} 个用户，但没有新增任务。',
+    keywordSearchFailed: '⚠️ 关键字搜索失败：{msg}',
     deepTitle: '🔍 深度扫描某博主的回复',
     deepLabelHandle: '博主 Handle（例：@xxx）',
     deepLabelPosts: '最多采集帖子数',
@@ -219,6 +228,14 @@ const I18N = {
     labelActionMode: 'Action Mode',
     actionBlock: 'Block',
     actionHide: 'Hide',
+    labelKeywordUserSearch: 'Search users by keyword',
+    keywordPlaceholder: 'Keyword',
+    btnKeywordUserBlock: 'Search and queue',
+    keywordSearching: 'Searching users and adding queue items...',
+    keywordSearchRequired: 'Enter a search keyword',
+    keywordSearchDone: 'Found {found} users and added {added} new tasks.',
+    keywordSearchNoNew: 'Found {found} users, but added no new tasks.',
+    keywordSearchFailed: '⚠️ Keyword user search failed: {msg}',
     deepTitle: '🔍 Deep Scan Replies for a Creator',
     deepLabelHandle: 'Creator handle (example: @xxx)',
     deepLabelPosts: 'Max posts to scan',
@@ -292,6 +309,8 @@ function applyStaticTranslations() {
   setText('label-action-mode', t('labelActionMode'));
   setText('option-action-block', t('actionBlock'));
   setText('option-action-hide', t('actionHide'));
+  setText('label-keyword-user-search', t('labelKeywordUserSearch'));
+  setText('btn-keyword-user-block', keywordSearchRunning ? t('keywordSearching') : t('btnKeywordUserBlock'));
   setText('text-deep-scan-title', t('deepTitle'));
   setText('label-deep-scan-handle', t('deepLabelHandle'));
   setText('label-deep-scan-posts', t('deepLabelPosts'));
@@ -322,8 +341,11 @@ function applyStaticTranslations() {
 
   const actionSelect = document.getElementById('select-action-mode');
   if (actionSelect) actionSelect.value = moderationAction;
+  const keywordInput = document.getElementById('keyword-user-search');
+  if (keywordInput) keywordInput.placeholder = t('keywordPlaceholder');
 
   updateAnalyzeButtonState();
+  updateKeywordSearchButtonState();
   updateConfirmBtn();
   if (lastAllSessions.length) renderBlockDetails();
 }
@@ -447,6 +469,70 @@ function updateAnalyzeButtonState() {
   inlineAnalyzeBtn.textContent = analysisRunning
     ? t('analyzing')
     : (aiAnalysisEnabled && providerConfigured ? t('startAiLocal') : t('startLocal'));
+}
+
+function updateKeywordSearchButtonState() {
+  const btn = document.getElementById('btn-keyword-user-block');
+  if (!btn) return;
+  btn.disabled = keywordSearchRunning;
+  btn.textContent = keywordSearchRunning ? t('keywordSearching') : t('btnKeywordUserBlock');
+}
+
+function setKeywordSearchStatus(message, isError = false) {
+  const el = document.getElementById('keyword-user-status');
+  if (!el) return;
+  el.textContent = message || '';
+  el.classList.toggle('error', Boolean(isError));
+}
+
+function normalizeKeywordSearchLimit(raw) {
+  const n = Math.round(Number(raw));
+  if (!Number.isFinite(n)) return 100;
+  return Math.max(1, Math.min(1000, n));
+}
+
+async function searchKeywordUsersAndQueue() {
+  if (keywordSearchRunning) return;
+
+  const keywordInput = document.getElementById('keyword-user-search');
+  const limitInput = document.getElementById('keyword-user-limit');
+  const keyword = (keywordInput?.value || '').trim();
+  const maxUsers = normalizeKeywordSearchLimit(limitInput?.value);
+  if (limitInput) limitInput.value = String(maxUsers);
+
+  if (!keyword) {
+    setKeywordSearchStatus(t('keywordSearchRequired'), true);
+    keywordInput?.focus();
+    return;
+  }
+
+  keywordSearchRunning = true;
+  updateKeywordSearchButtonState();
+  setKeywordSearchStatus(t('keywordSearching'));
+
+  try {
+    const resp = await chrome.runtime.sendMessage({
+      action: 'searchUsersAndEnqueue',
+      keyword,
+      maxUsers,
+      actionType: moderationAction
+    });
+    if (!resp?.ok) throw new Error(resp?.error || t('unknownError'));
+
+    const found = Number(resp.found || 0);
+    const added = Number(resp.added || 0);
+    setKeywordSearchStatus(
+      added > 0
+        ? t('keywordSearchDone', { found, added })
+        : t('keywordSearchNoNew', { found })
+    );
+    await refreshQueueStatus();
+  } catch (e) {
+    setKeywordSearchStatus(t('keywordSearchFailed', { msg: e.message }), true);
+  } finally {
+    keywordSearchRunning = false;
+    updateKeywordSearchButtonState();
+  }
 }
 
 function bindClick(id, handler) {
@@ -1334,6 +1420,7 @@ bindClick('btn-open-options-from-notice', () => {
 
 bindClick('btn-analyze', startAnalysis);
 bindClick('btn-analyze-inline', startAnalysis);
+bindClick('btn-keyword-user-block', searchKeywordUsersAndQueue);
 
 bindClick('btn-retry', retryAnalysis);
 
@@ -1370,6 +1457,12 @@ bindClick('btn-queue-details', openBlockDetails);
 bindClick('btn-review-rate', openReviewPage);
 bindClick('btn-review-later', snoozeReviewPrompt);
 bindClick('btn-review-dismiss', dismissReviewPrompt);
+
+document.getElementById('keyword-user-search')?.addEventListener('keydown', e => {
+  if (e.key === 'Enter') {
+    searchKeywordUsersAndQueue();
+  }
+});
 
 // Block details modal
 bindClick('modal-close-block-details', closeBlockDetails);

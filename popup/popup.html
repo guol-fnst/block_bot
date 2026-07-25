@@ -103,6 +103,15 @@
         <option value="hide" id="option-action-hide">隐藏</option>
       </select>
     </div>
+    <div class="keyword-block-panel">
+      <label class="field-label" for="keyword-user-search" id="label-keyword-user-search">按关键字搜索用户</label>
+      <div class="keyword-search-row">
+        <input id="keyword-user-search" class="input keyword-search-input" placeholder="关键词" />
+        <input id="keyword-user-limit" class="input keyword-limit-input" type="number" value="100" min="1" max="1000" />
+        <button class="btn btn-danger" id="btn-keyword-user-block">搜索并加入队列</button>
+      </div>
+      <p id="keyword-user-status" class="muted keyword-search-status"></p>
+    </div>
     <section id="review-prompt" class="review-prompt hidden">
       <button class="review-close" id="btn-review-dismiss" title="关闭">×</button>
       <div class="review-kicker">Block Bot</div>

@@ -215,6 +215,62 @@
     });
   }
 
+  function parseUserFromCell(cell) {
+    const anchors = cell.querySelectorAll('a[href^="/"]');
+    let handleSlug = '';
+    for (const a of anchors) {
+      const rawPath = a.getAttribute('href') || '';
+      const slug = rawPath.replace(/^\//, '').split('/')[0].split('?')[0];
+      if (isLikelyHandleSlug(slug)) {
+        handleSlug = decodeURIComponent(slug);
+        break;
+      }
+    }
+    if (!handleSlug) return null;
+
+    const handle = `@${handleSlug}`;
+    let displayName = '';
+    const nameCandidates = cell.querySelectorAll('div[dir="ltr"] span, span');
+    for (const s of nameCandidates) {
+      const text = (s.innerText || s.textContent || '').trim();
+      if (text && !text.startsWith('@') && text !== handle) {
+        displayName = text;
+        break;
+      }
+    }
+
+    return {
+      uniqueId: handle.toLowerCase(),
+      displayName,
+      handle,
+      profileUrl: `https://x.com/${handleSlug}`
+    };
+  }
+
+  function collectVisibleUsers() {
+    const map = new Map();
+    const cells = document.querySelectorAll('[data-testid="UserCell"]');
+    cells.forEach(cell => {
+      try {
+        const parsed = parseUserFromCell(cell);
+        if (parsed && !map.has(parsed.uniqueId)) {
+          map.set(parsed.uniqueId, parsed);
+        }
+      } catch (_) {
+        // skip malformed user nodes
+      }
+    });
+    return Array.from(map.values());
+  }
+
+  function mergeUsersIntoMap(targetMap, users) {
+    users.forEach(u => {
+      if (!targetMap.has(u.uniqueId)) {
+        targetMap.set(u.uniqueId, u);
+      }
+    });
+  }
+
   function isScrollableElement(el) {
     if (!el || el === document.body) return false;
     const style = window.getComputedStyle(el);
@@ -405,6 +461,45 @@
     return false;
   }
 
+  async function waitForInitialUserNodes(timeoutMs = 9000) {
+    const started = Date.now();
+    while (Date.now() - started < timeoutMs) {
+      const count = document.querySelectorAll('[data-testid="UserCell"]').length;
+      if (count > 0) return true;
+      await sleep(220);
+    }
+    return false;
+  }
+
+  async function waitForTweetListToSettle(threadContext, merged, maxWaitMs, minWaitMs = 280) {
+    const started = Date.now();
+    let lastSize = merged.size;
+    let lastMetrics = getScrollMetrics(getPreferredScrollRoot());
+    let stableChecks = 0;
+
+    while (Date.now() - started < maxWaitMs) {
+      const remaining = maxWaitMs - (Date.now() - started);
+      await sleep(Math.min(160, Math.max(40, remaining)));
+
+      mergeTweetsIntoMap(merged, collectVisibleTweets(threadContext));
+
+      const metrics = getScrollMetrics(getPreferredScrollRoot());
+      const sizeChanged = merged.size !== lastSize;
+      const positionChanged = Math.abs(metrics.top - lastMetrics.top) > 12 || Math.abs(metrics.maxTop - lastMetrics.maxTop) > 24;
+
+      if (sizeChanged || positionChanged) {
+        stableChecks = 0;
+        lastSize = merged.size;
+        lastMetrics = metrics;
+      } else if (Date.now() - started >= minWaitMs) {
+        stableChecks += 1;
+        if (stableChecks >= 2) break;
+      }
+    }
+
+    mergeTweetsIntoMap(merged, collectVisibleTweets(threadContext));
+  }
+
   async function collectTweetsWithAutoScroll(threadContext, scrapeConfig = {}) {
     const restore = disableScraping();
     try {
@@ -414,7 +509,7 @@
       const maxRounds = Math.min(300, Math.max(configuredMaxRounds, targetBasedRounds));
       const waitMs = normalizeInt(scrapeConfig.scrollWaitMs, 600, 2500, DEFAULT_SCRAPE_SCROLL_WAIT_MS);
       const stagnantLimit = normalizeInt(scrapeConfig.stagnantRounds, 2, 8, DEFAULT_SCRAPE_STAGNANT_ROUNDS);
-      const confirmWaitMs = Math.min(2800, waitMs + 250);
+      const confirmWaitMs = Math.min(2200, waitMs + 250);
 
       await scrollToPageTop(waitMs);
 
@@ -446,10 +541,8 @@
 
         // 需要连续 4 轮无变化才停止，避免网络延迟导致误判停滞
         if (stagnantRounds >= stagnantLimit) {
-          // 额外等待一次再确认，防止网络慢时漏采
-          await sleep(confirmWaitMs);
-          const afterWait = collectVisibleTweets(threadContext);
-          mergeTweetsIntoMap(merged, afterWait);
+          // 额外等到列表稳定再确认，防止网络慢时漏采，同时避免底部固定长等。
+          await waitForTweetListToSettle(threadContext, merged, confirmWaitMs, Math.min(360, waitMs));
           if (merged.size >= maxTweets) break;
           const confirmMetrics = getScrollMetrics(getPreferredScrollRoot());
           const stillNearBottom = confirmMetrics.top >= (confirmMetrics.maxTop - Math.max(80, Math.round(confirmMetrics.clientHeight * 0.12)));
@@ -473,9 +566,53 @@
       // 最终再滚动一次并等待，确保末尾推文不遗漏
       const finalBase = Math.max(window.innerHeight * 1.2, 1000);
       await humanScrollBy(getPreferredScrollRoot(), finalBase * (0.85 + Math.random() * 0.3));
-      await sleep(confirmWaitMs);
-      mergeTweetsIntoMap(merged, collectVisibleTweets(threadContext));
+      await waitForTweetListToSettle(threadContext, merged, confirmWaitMs, Math.min(360, waitMs));
       return Array.from(merged.values()).slice(0, maxTweets).map(({ uniqueId, ...tweet }) => tweet);
+    } finally {
+      restore();
+    }
+  }
+
+  async function collectUsersWithAutoScroll(scrapeConfig = {}) {
+    const restore = disableScraping();
+    try {
+      const maxUsers = normalizeInt(scrapeConfig.maxUsers, 5, 1000, 100);
+      const maxRounds = normalizeInt(scrapeConfig.maxRounds, 3, 120, Math.max(12, Math.ceil(maxUsers / 5)));
+      const waitMs = normalizeInt(scrapeConfig.scrollWaitMs, 600, 2500, DEFAULT_SCRAPE_SCROLL_WAIT_MS);
+      const stagnantLimit = normalizeInt(scrapeConfig.stagnantRounds, 2, 8, 4);
+
+      await scrollToPageTop(waitMs);
+
+      const merged = new Map();
+      let stagnantRounds = 0;
+      let lastSize = 0;
+      let lastScrollTop = -1;
+
+      for (let i = 0; i < maxRounds; i++) {
+        mergeUsersIntoMap(merged, collectVisibleUsers());
+        if (merged.size >= maxUsers) break;
+
+        const root = getPreferredScrollRoot();
+        const metrics = getScrollMetrics(root);
+        const movedSinceLastRound = lastScrollTop < 0 ? true : (metrics.top - lastScrollTop) > 24;
+        const nearBottom = metrics.top >= (metrics.maxTop - Math.max(80, Math.round(metrics.clientHeight * 0.12)));
+        if (merged.size <= lastSize && (!movedSinceLastRound || nearBottom)) {
+          stagnantRounds += 1;
+        } else {
+          stagnantRounds = 0;
+        }
+        lastSize = merged.size;
+        lastScrollTop = metrics.top;
+
+        if (stagnantRounds >= stagnantLimit) break;
+
+        const delta = Math.max(metrics.clientHeight * 0.85, 700);
+        await humanScrollBy(root, delta * (0.85 + Math.random() * 0.3));
+        await sleep(waitMs);
+      }
+
+      mergeUsersIntoMap(merged, collectVisibleUsers());
+      return Array.from(merged.values()).slice(0, maxUsers).map(({ uniqueId, ...user }) => user);
     } finally {
       restore();
     }
@@ -491,6 +628,12 @@
     return collectTweetsWithAutoScroll(threadContext, scrapeConfig);
   }
 
+  async function scrapeUsers(scrapeConfig = {}) {
+    const initialWaitMs = normalizeInt(scrapeConfig.initialWaitMs, 1500, 15000, 9000);
+    await waitForInitialUserNodes(initialWaitMs);
+    return collectUsersWithAutoScroll(scrapeConfig);
+  }
+
   // ── Message listener ─────────────────────────────────────────────────────────
   chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     switch (msg.action) {
@@ -498,6 +641,13 @@
       case 'scrapeTweets': {
         scrapeTweets(msg.scrapeConfig || {})
           .then(tweets => sendResponse({ ok: true, tweets }))
+          .catch(e => sendResponse({ ok: false, error: e.message }));
+        return true;
+      }
+
+      case 'scrapeUsers': {
+        scrapeUsers(msg.scrapeConfig || {})
+          .then(users => sendResponse({ ok: true, users }))
           .catch(e => sendResponse({ ok: false, error: e.message }));
         return true;
       }
